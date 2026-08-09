@@ -44,10 +44,22 @@ export function vercelStatus({ force = false } = {}) {
 
   if (bin) {
     const res = runSync(bin, ['whoami']);
-    // `vercel whoami` prints the username on success and errors when signed out.
-    if (res.status === 0 && res.stdout.trim() && !/error/i.test(res.stdout)) {
-      loggedIn = true;
-      user = res.stdout.trim().split(/\r?\n/).pop();
+    // `vercel whoami` prints the username, but the surrounding lines vary by
+    // version — a "Vercel CLI x.y.z" banner, and newer builds emit an
+    // <claude-code-hint .../> tag. Pick the line that actually looks like a
+    // username rather than assuming a position or scanning for "error".
+    if (res.status === 0) {
+      const candidate = `${res.stdout}\n${res.stderr}`
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((l) => !l.startsWith('<') && !/^vercel cli/i.test(l) && !/\s/.test(l))
+        .pop();
+
+      if (candidate && /^[a-z0-9][a-z0-9-_]*$/i.test(candidate)) {
+        loggedIn = true;
+        user = candidate;
+      }
     }
   }
 
