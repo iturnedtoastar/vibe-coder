@@ -19,6 +19,7 @@ import { resolveInWorkspace, toRelative, walkWorkspace } from './sandbox.js';
 import { mediaToolAvailable } from './tools.js';
 import { videoStatus, renderVideo } from './video.js';
 import { vercelStatus, deployToVercel, connectVercelGit } from './vercel.js';
+import { scaffoldStatus, scaffold, COMPONENT_GUIDANCE } from './scaffold.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.htm', '.css',
@@ -108,6 +109,10 @@ function describePreviewContract(ctx) {
       + 'for a phone rather than scaling a desktop design down.'
     );
   }
+
+  // components.build is a specification, not a package — it's most useful as
+  // instruction the agent follows while writing UI.
+  lines.push(COMPONENT_GUIDANCE);
 
   lines.push(
     '',
@@ -218,6 +223,7 @@ export function createServer({ token, version } = {}) {
       media: mediaToolAvailable(),
       video: videoStatus({ force: true }),
       vercel: vercelStatus({ force: true }),
+      scaffold: scaffoldStatus(),
       agent: { maxIterations: config.agent.maxIterations, allowBash: config.agent.allowBash },
       providers: Object.fromEntries(Object.keys(PROVIDERS).map((p) => [p, Boolean(config.keys[p])])),
     });

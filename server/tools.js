@@ -5,6 +5,7 @@ import { config, getWorkspaceRoot } from './config.js';
 import { resolveInWorkspace, toRelative, walkWorkspace, SandboxError } from './sandbox.js';
 import { renderVideo, videoToolAvailable, VIDEO_TOOL } from './video.js';
 import { deployToVercel, connectVercelGit, vercelToolsAvailable, VERCEL_TOOLS } from './vercel.js';
+import { scaffold, addVercelInsights, scaffoldToolsAvailable, SCAFFOLD_TOOLS } from './scaffold.js';
 
 /**
  * Canonical tool definitions. Each provider adapter translates this shape into
@@ -141,6 +142,7 @@ export function availableTools() {
   if (mediaToolAvailable()) tools.push(MEDIA_TOOL);
   if (videoToolAvailable()) tools.push(VIDEO_TOOL);
   if (vercelToolsAvailable()) tools.push(...VERCEL_TOOLS);
+  if (scaffoldToolsAvailable()) tools.push(...SCAFFOLD_TOOLS);
   return tools;
 }
 
@@ -260,6 +262,19 @@ const IMPLS = {
           : truncate(`yt-dlp exited ${code}\n${out}`));
       });
     });
+  },
+
+  async scaffold_project({ template, example, force }) {
+    const result = await scaffold({ template, example, force: Boolean(force) });
+    if (result.error) throw new Error(result.error);
+    return `Scaffolded ${result.template} — ${result.files} entries in the folder. `
+      + 'The editor reloads from disk automatically.';
+  },
+
+  async add_vercel_insights() {
+    const result = await addVercelInsights({});
+    if (result.error) throw new Error(result.error);
+    return `Installed ${result.installed.join(' and ')}.\n${result.next}`;
   },
 
   async deploy_vercel({ production, name }) {
