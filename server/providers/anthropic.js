@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
+import { toParts } from '../messages.js';
 
 /**
  * Models that take adaptive thinking + output_config.effort. Older models
@@ -50,7 +51,21 @@ export const anthropic = {
   defaultModel: 'claude-opus-5',
 
   toHistory(messages) {
-    return messages.map((m) => ({ role: m.role, content: m.content }));
+    return messages.map((m) => {
+      // Plain strings stay strings — only promote to blocks when needed.
+      if (typeof m.content === 'string') return { role: m.role, content: m.content };
+      return {
+        role: m.role,
+        content: toParts(m.content).map((part) =>
+          part.type === 'image'
+            ? {
+                type: 'image',
+                source: { type: 'base64', media_type: part.mediaType, data: part.data },
+              }
+            : { type: 'text', text: part.text }
+        ),
+      };
+    });
   },
 
   /**

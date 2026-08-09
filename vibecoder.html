@@ -422,6 +422,10 @@
                             <span>Auto-save to disk</span>
                             <input type="checkbox" id="setting-autosave" onchange="updateSetting('autoSave', this.checked)" class="accent-white w-3.5 h-3.5">
                         </label>
+                        <label class="flex items-center justify-between p-1.5 text-[11px] text-white/80 hover:bg-white/5 rounded-lg cursor-pointer transition-colors" title="Sends a screenshot of the preview with each message so the agent can see its own output">
+                            <span>Let the agent see the preview</span>
+                            <input type="checkbox" id="setting-seepreview" onchange="updateSetting('seePreview', this.checked)" class="accent-white w-3.5 h-3.5">
+                        </label>
                         <button onclick="resetApp()" class="w-full flex items-center gap-2 p-1.5 text-[11px] text-white/80 hover:text-white bg-white/5 hover:bg-white/15 border border-white/10 rounded-lg transition-colors">
                             <i data-lucide="eraser" class="w-3.5 h-3.5"></i> Clear workspace &amp; cache
                         </button>
@@ -2654,6 +2658,39 @@
             renderAttachments();
         }
 
+        // --- LETTING THE AGENT SEE THE PREVIEW ---
+        //
+        // Until now the agent wrote code against a *described* viewport and
+        // never looked at the result — so "make it match the design" was a
+        // guess. Capturing the rendered preview and sending it along closes
+        // that loop: it can see what it actually built.
+
+        async function capturePreview() {
+            if (!window.vibeDesktop?.capture) return null;
+
+            const frame = document.getElementById('device-frame');
+            if (!frame) return null;
+            const box = frame.getBoundingClientRect();
+            if (box.width < 20 || box.height < 20) return null;   // pane collapsed
+
+            try {
+                const shot = await window.vibeDesktop.capture({
+                    x: box.x, y: box.y, width: box.width, height: box.height,
+                });
+                if (shot?.error || !shot?.dataUrl) return null;
+
+                const match = /^data:([^;]+);base64,(.*)$/s.exec(shot.dataUrl);
+                if (!match) return null;
+                return { type: 'image', mediaType: match[1], data: match[2] };
+            } catch {
+                return null;
+            }
+        }
+
+        function previewVisionEnabled() {
+            return editorSettings.seePreview !== false && Boolean(window.vibeDesktop?.capture);
+        }
+
         async function submitAIQuery() {
             const inputEl = document.getElementById('ai-input');
             const prompt = inputEl.value.trim();
@@ -2698,7 +2735,16 @@
             pendingAttachments = [];
             renderAttachments();
 
-            aiChatHistory.push({ role: 'user', content });
+            // Send the rendered preview alongside the question so the agent can
+            // see what it's changing. Text-only if capture isn't available.
+            const shot = previewVisionEnabled() ? await capturePreview() : null;
+            aiChatHistory.push({
+                role: 'user',
+                content: shot
+                    ? [{ type: 'text', text: content }, shot]
+                    : content,
+            });
+
             await streamAgentTurn();
         }
 
@@ -3717,7 +3763,7 @@
 
         let storedActiveId = null;
         let activeFileId = null;
-        let editorSettings = { provider: 'anthropic', baseUrl: '', fontSize: 13, wordWrap: true, minimap: false, unicodeHighlight: false, apiKey: '', aiModel: 'claude-opus-5', backendUrl: '', backendToken: '', autoSave: true, agentWidth: 384 };
+        let editorSettings = { provider: 'anthropic', baseUrl: '', fontSize: 13, wordWrap: true, minimap: false, unicodeHighlight: false, apiKey: '', aiModel: 'claude-opus-5', backendUrl: '', backendToken: '', autoSave: true, agentWidth: 384, seePreview: true };
         const models = {}; 
         const viewStates = {}; 
         
@@ -3749,6 +3795,7 @@
 
             document.getElementById('setting-minimap').checked = editorSettings.minimap;
             document.getElementById('setting-autosave').checked = editorSettings.autoSave !== false;
+            document.getElementById('setting-seepreview').checked = editorSettings.seePreview !== false;
             document.getElementById('setting-unicode').checked = editorSettings.unicodeHighlight;
             
             const providerSelect = document.getElementById('setting-provider');

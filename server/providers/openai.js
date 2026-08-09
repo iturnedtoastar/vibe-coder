@@ -1,5 +1,6 @@
 import { config } from '../config.js';
 import { sseLines, assertOk } from './sse.js';
+import { toParts } from '../messages.js';
 
 /**
  * OpenAI-compatible chat completions with streaming tool calls. Works against
@@ -11,7 +12,17 @@ export const openai = {
   defaultModel: 'gpt-4o',
 
   toHistory(messages) {
-    return messages.map((m) => ({ role: m.role, content: m.content }));
+    return messages.map((m) => {
+      if (typeof m.content === 'string') return { role: m.role, content: m.content };
+      return {
+        role: m.role,
+        content: toParts(m.content).map((part) =>
+          part.type === 'image'
+            ? { type: 'image_url', image_url: { url: `data:${part.mediaType};base64,${part.data}` } }
+            : { type: 'text', text: part.text }
+        ),
+      };
+    });
   },
 
   async *turn({ model, apiKey, baseUrl, system, history, tools, signal }) {

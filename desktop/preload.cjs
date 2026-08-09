@@ -16,4 +16,5 @@ contextBridge.exposeInMainWorld('vibeDesktop', {
   rememberFolder: (dir) => ipcRenderer.invoke('vibe:remember-folder', dir),
   revealFolder: () => ipcRenderer.invoke('vibe:reveal-folder'),
   resetApp: () => ipcRenderer.invoke('vibe:reset-app'),
+  capture: (rect) => ipcRenderer.invoke('vibe:capture', rect),
 });

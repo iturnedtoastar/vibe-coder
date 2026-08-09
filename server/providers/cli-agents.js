@@ -1,5 +1,8 @@
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import { spawnCommand } from '../spawn-win.js';
+import { textOf, imagesOf } from '../messages.js';
 import { config, getWorkspaceRoot } from '../config.js';
 
 /**
@@ -238,7 +241,30 @@ export function makeCliProvider(key) {
       }
 
       const last = [...history].reverse().find((m) => m.role === 'user');
-      let prompt = typeof last?.content === 'string' ? last.content : String(last?.content ?? '');
+      let prompt = textOf(last?.content);
+
+      // These CLIs take a prompt string, not image blocks — but they can all
+      // read an image file with their own tools. Writing it into the folder and
+      // pointing at it is how they get to see a screenshot.
+      const images = imagesOf(last?.content);
+      if (images.length) {
+        const dir = path.join(getWorkspaceRoot(), '.vibe-attachments');
+        const written = [];
+        try {
+          fs.mkdirSync(dir, { recursive: true });
+          images.forEach((img, i) => {
+            const ext = (img.mediaType.split('/')[1] || 'png').replace(/[^a-z0-9]/gi, '');
+            const file = path.join(dir, `image-${Date.now()}-${i}.${ext}`);
+            fs.writeFileSync(file, Buffer.from(img.data, 'base64'));
+            written.push(file);
+          });
+        } catch { /* fall through with whatever landed */ }
+
+        if (written.length) {
+          prompt = `${prompt}\n\nAttached image${written.length > 1 ? 's' : ''} — read ${written.length > 1 ? 'them' : 'it'} to see what I mean:\n`
+            + written.map((f) => `- ${f}`).join('\n');
+        }
+      }
 
       // These CLIs have their own system prompt and no reliable way to append
       // to it across versions, so the preview contract rides along with the
