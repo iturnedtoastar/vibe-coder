@@ -1,0 +1,68 @@
+{
+  "name": "vibe-coder",
+  "productName": "Vibe Coder",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "An AI coding IDE with a real terminal, real file access, and a tool-using agent.",
+  "author": "Vibe Coder",
+  "main": "desktop/main.js",
+  "scripts": {
+    "start": "node desktop/launch.js",
+    "server": "node server/server.js",
+    "dist": "electron-builder --win",
+    "dist:dir": "electron-builder --dir"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "latest",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ws": "^8.17.1"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "build": {
+    "appId": "com.vibecoder.ide",
+    "productName": "Vibe Coder",
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
+    "extraResources": [
+      { "from": "SETUP.md", "to": "SETUP.md" },
+      { "from": "scripts", "to": "scripts" }
+    ],
+    "files": [
+      "desktop/**/*",
+      "server/**/*",
+      "vibecoder.html",
+      "favicon.png",
+      "!server/.env",
+      "!**/node_modules/*/{test,__tests__,tests,example,examples,docs}/**"
+    ],
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "zip", "arch": ["x64"] }
+      ],
+      "icon": "favicon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Vibe Coder"
+    }
+  }
+}
