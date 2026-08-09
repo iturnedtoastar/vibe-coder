@@ -679,6 +679,7 @@
                 <span class="text-sm font-semibold text-white flex items-center gap-2">
                     <svg class="vibe-mark w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path class="facet-l" d="M2 9h20" stroke-width="1.2"/><path class="facet-r" d="M6 3l2 6 4 12 4-12 2-6" stroke-width="1.2"/></svg> Vibe Agent
                 </span>
+                <span id="session-usage" class="hidden text-[9px] text-white/30 font-mono tabular-nums mr-2" title="Tokens used this session"></span>
                 <button onclick="toggleAIDrawer()" class="text-white/40 hover:text-white p-1 rounded-md hover:bg-white/10 transition-colors"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
             
@@ -2658,6 +2659,61 @@
             renderAttachments();
         }
 
+        // --- TOKEN AND COST VISIBILITY ---
+        //
+        // Long agent runs used to burn tokens invisibly. Every provider already
+        // reports usage; the CLIs report an actual dollar figure. Show the per-
+        // turn cost under the reply and keep a session total in the header.
+
+        const sessionUsage = { inputTokens: 0, outputTokens: 0, costUsd: 0, hasCost: false };
+
+        function formatTokens(n) {
+            if (!n) return '0';
+            if (n < 1000) return String(n);
+            if (n < 1000000) return `${(n / 1000).toFixed(n < 10000 ? 1 : 0)}k`;
+            return `${(n / 1000000).toFixed(1)}M`;
+        }
+
+        function recordUsage(usage, msgId) {
+            const input = (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0);
+            const output = usage.outputTokens || 0;
+            if (!input && !output && usage.costUsd == null) return;
+
+            sessionUsage.inputTokens += input;
+            sessionUsage.outputTokens += output;
+            if (typeof usage.costUsd === 'number') {
+                sessionUsage.costUsd += usage.costUsd;
+                sessionUsage.hasCost = true;
+            }
+
+            // Per-turn line under the message it belongs to.
+            const row = document.getElementById(msgId);
+            if (row && !row.querySelector('.msg-usage')) {
+                const bits = [`${formatTokens(input)} in`, `${formatTokens(output)} out`];
+                if (typeof usage.costUsd === 'number') bits.push(`$${usage.costUsd.toFixed(4)}`);
+                const el = document.createElement('div');
+                el.className = 'msg-usage text-[9px] text-white/25 mt-1 font-mono tabular-nums';
+                el.textContent = bits.join(' · ');
+                row.querySelector('.msg-actions')?.insertAdjacentElement('afterend', el);
+            }
+
+            renderSessionUsage();
+        }
+
+        function renderSessionUsage() {
+            const el = document.getElementById('session-usage');
+            if (!el) return;
+            const total = sessionUsage.inputTokens + sessionUsage.outputTokens;
+            if (!total) { el.classList.add('hidden'); return; }
+
+            el.classList.remove('hidden');
+            el.textContent = sessionUsage.hasCost
+                ? `${formatTokens(total)} tokens · $${sessionUsage.costUsd.toFixed(3)}`
+                : `${formatTokens(total)} tokens`;
+            el.title = `${sessionUsage.inputTokens.toLocaleString()} in, `
+                + `${sessionUsage.outputTokens.toLocaleString()} out this session`;
+        }
+
         // --- LETTING THE AGENT SEE THE PREVIEW ---
         //
         // Until now the agent wrote code against a *described* viewport and
@@ -2801,6 +2857,7 @@
                             if (event.changedFiles?.length) {
                                 VibeBackend.pullWorkspace('Agent edit');
                             }
+                            if (event.usage) recordUsage(event.usage, msgId);
                             break;
                     }
                 });

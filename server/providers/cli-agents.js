@@ -83,6 +83,14 @@ export const CLI_AGENTS = {
       }
       if (msg.type === 'result') {
         emit.session(msg.session_id);
+        // Claude Code reports a real dollar figure, not just tokens.
+        emit.usage({
+          inputTokens: msg.usage?.input_tokens || 0,
+          outputTokens: msg.usage?.output_tokens || 0,
+          cacheReadTokens: msg.usage?.cache_read_input_tokens || 0,
+          cacheWriteTokens: msg.usage?.cache_creation_input_tokens || 0,
+          costUsd: msg.total_cost_usd,
+        });
         if (msg.is_error) emit.fail(msg.result || msg.subtype || 'Claude Code reported an error.');
       }
     },
@@ -138,6 +146,11 @@ export const CLI_AGENTS = {
       if (msg.event === 'result') {
         const r = msg.result || {};
         emit.session(r.conversation_id);
+        emit.usage({
+          inputTokens: r.usage?.input_tokens || 0,
+          outputTokens: r.usage?.output_tokens || 0,
+          costUsd: r.total_cost_usd,
+        });
         if (r.status && r.status !== 'SUCCESS') {
           emit.fail(r.error || r.response || `Antigravity finished with status ${r.status}.`);
         }
@@ -344,6 +357,7 @@ export function makeCliProvider(key) {
         tool: (id, name, input) => pending.push({ type: 'tool_use', id, name, input }),
         result: (id, ok, content) => pending.push({ type: 'tool_result', id, name: 'tool', ok, content }),
         session: (id) => { if (id) onSession?.(id); },
+        usage: (u) => pending.push({ type: 'usage', ...u }),
         fail: (m) => { failure = m; },
       };
 

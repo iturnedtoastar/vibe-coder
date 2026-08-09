@@ -127,6 +127,18 @@ export const anthropic = {
       return { assistant: null, toolCalls: [], stop: 'refusal' };
     }
 
+    // Surface what the turn cost. The SDK reports cache reads separately;
+    // they bill differently, so keep them distinct rather than summing.
+    if (final.usage) {
+      yield {
+        type: 'usage',
+        inputTokens: final.usage.input_tokens || 0,
+        outputTokens: final.usage.output_tokens || 0,
+        cacheReadTokens: final.usage.cache_read_input_tokens || 0,
+        cacheWriteTokens: final.usage.cache_creation_input_tokens || 0,
+      };
+    }
+
     const toolCalls = final.content
       .filter((b) => b.type === 'tool_use')
       .map((b) => ({ id: b.id, name: b.name, input: b.input }));

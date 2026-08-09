@@ -38,6 +38,8 @@ export const openai = {
       body: JSON.stringify({
         model,
         stream: true,
+        // Streams omit usage unless it's explicitly requested.
+        stream_options: { include_usage: true },
         messages: [{ role: 'system', content: system }, ...history],
         // OpenAI rejects an empty `tools` array outright, so omit both fields
         // entirely when running without tools (the plain /api/chat path).
@@ -67,6 +69,15 @@ export const openai = {
       } catch {
         continue;
       }
+      // The usage chunk arrives last and carries no choices.
+      if (chunk.usage) {
+        yield {
+          type: 'usage',
+          inputTokens: chunk.usage.prompt_tokens || 0,
+          outputTokens: chunk.usage.completion_tokens || 0,
+        };
+      }
+
       const choice = chunk.choices?.[0];
       if (!choice) continue;
       if (choice.finish_reason) finishReason = choice.finish_reason;

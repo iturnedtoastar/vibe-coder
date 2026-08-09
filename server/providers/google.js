@@ -83,6 +83,14 @@ export const google = {
       } catch {
         continue;
       }
+      if (chunk.usageMetadata) {
+        yield {
+          type: 'usage',
+          inputTokens: chunk.usageMetadata.promptTokenCount || 0,
+          outputTokens: chunk.usageMetadata.candidatesTokenCount || 0,
+        };
+      }
+
       const candidate = chunk.candidates?.[0];
       if (!candidate) continue;
       if (candidate.finishReason) finishReason = candidate.finishReason;

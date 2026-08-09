@@ -91,6 +91,20 @@ export async function* runAgent({
   const history = adapter.toHistory(messages);
   const changedFiles = new Set();
 
+  // A run is many turns; usage events arrive per turn, so total them up.
+  const usage = {
+    inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0,
+  };
+  let sawCost = false;
+
+  const accumulate = (event) => {
+    usage.inputTokens += event.inputTokens || 0;
+    usage.outputTokens += event.outputTokens || 0;
+    usage.cacheReadTokens += event.cacheReadTokens || 0;
+    usage.cacheWriteTokens += event.cacheWriteTokens || 0;
+    if (typeof event.costUsd === 'number') { usage.costUsd += event.costUsd; sawCost = true; }
+  };
+
   try {
     for (let iteration = 0; iteration < config.agent.maxIterations; iteration++) {
       const turn = adapter.turn({
@@ -109,6 +123,7 @@ export async function* runAgent({
       // Forward stream events, then collect the generator's return value.
       let step = await turn.next();
       while (!step.done) {
+        if (step.value?.type === 'usage') accumulate(step.value);
         yield step.value;
         step = await turn.next();
       }
@@ -117,7 +132,12 @@ export async function* runAgent({
       adapter.pushAssistant(history, assistant);
 
       if (stop === 'refusal' || !toolCalls || toolCalls.length === 0) {
-        yield { type: 'done', changedFiles: [...changedFiles], iterations: iteration + 1 };
+        yield {
+          type: 'done',
+          changedFiles: [...changedFiles],
+          iterations: iteration + 1,
+          usage: { ...usage, costUsd: sawCost ? usage.costUsd : null },
+        };
         return;
       }
 
@@ -149,7 +169,12 @@ export async function* runAgent({
       type: 'text',
       text: `\n[Stopped after ${config.agent.maxIterations} tool iterations without finishing. Send another message to continue.]\n`,
     };
-    yield { type: 'done', changedFiles: [...changedFiles], iterations: config.agent.maxIterations };
+    yield {
+      type: 'done',
+      changedFiles: [...changedFiles],
+      iterations: config.agent.maxIterations,
+      usage: { ...usage, costUsd: sawCost ? usage.costUsd : null },
+    };
   } catch (err) {
     if (signal?.aborted) return;
     yield { type: 'error', message: err?.message || String(err) };

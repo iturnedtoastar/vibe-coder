@@ -1,4 +1,7 @@
-name: Build Windows app
+name: Build desktop apps
+
+# macOS installers can only be produced on macOS — electron-builder refuses to
+# cross-compile them — so each platform builds on its own runner.
 
 on:
   workflow_dispatch:
@@ -7,7 +10,19 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            command: npm run dist:win
+          - os: macos-latest
+            name: macos
+            command: npm run dist:mac
+
+    runs-on: ${{ matrix.os }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -16,21 +31,23 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - run: npm ci
 
-      - name: Build installer and portable zip
-        run: npm run dist
+      - name: Build
+        run: ${{ matrix.command }}
         env:
+          # Unsigned builds. To sign, add CSC_LINK (base64 .p12) and
+          # CSC_KEY_PASSWORD as repository secrets and drop this line.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - uses: actions/upload-artifact@v4
         with:
-          name: vibe-coder-windows
+          name: vibe-coder-${{ matrix.name }}
           retention-days: 30
           path: |
             dist/*.exe
             dist/*.zip
+            dist/*.dmg
 
   release:
     needs: build
