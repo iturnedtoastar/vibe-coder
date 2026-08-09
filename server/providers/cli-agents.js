@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { spawnCommand } from '../spawn-win.js';
 import { config, getWorkspaceRoot } from '../config.js';
 
 /**
@@ -185,8 +186,14 @@ function resolveCli(key) {
     const hits = (res.stdout || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 
     if (res.status === 0 && hits.length) {
-      const exe = hits.find((p) => p.toLowerCase().endsWith('.exe'));
-      const chosen = exe || hits[0];
+      // On Windows prefer a real executable, then a .cmd/.bat shim. Never the
+      // extensionless npm shim — that's a bash script cmd.exe cannot run.
+      const chosen = isWin
+        ? ['.exe', '.cmd', '.bat', '.com']
+            .map((ext) => hits.find((p) => p.toLowerCase().endsWith(ext)))
+            .find(Boolean)
+        : hits[0];
+      if (!chosen) { presence.set(key, info); return info; }
       info = {
         available: true,
         path: chosen,
@@ -257,12 +264,10 @@ export function makeCliProvider(key) {
       // A real executable is spawned directly. Only .cmd/.ps1 shims need
       // cmd.exe, because Node refuses to spawn batch files (CVE-2024-27980).
       const resolved = resolveCli(key);
-      const command = resolved.needsShell ? (process.env.ComSpec || 'cmd.exe') : resolved.path;
-      const argv = resolved.needsShell ? ['/d', '/s', '/c', spec.bin, ...args] : args;
 
       let child;
       try {
-        child = spawn(command, argv, {
+        child = spawnCommand(resolved.path, args, {
           cwd: getWorkspaceRoot(),
           env,
           windowsHide: true,

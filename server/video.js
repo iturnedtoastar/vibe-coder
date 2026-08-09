@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { spawnCommand } from './spawn-win.js';
 import { config, getWorkspaceRoot } from './config.js';
 import { toRelative } from './sandbox.js';
 
@@ -115,12 +116,8 @@ export function renderVideo({ entry, out = 'video/out.mp4' } = {}) {
 
   // .cmd shims can't be spawned directly on Windows (CVE-2024-27980); route
   // through cmd.exe with an argv array so Node still quotes each argument.
-  const needsShell = isWin && !status.hyperframesPath.toLowerCase().endsWith('.exe');
-  const command = needsShell ? (process.env.ComSpec || 'cmd.exe') : status.hyperframesPath;
-  const argv = needsShell ? ['/d', '/s', '/c', status.hyperframesPath, ...args] : args;
-
   return new Promise((resolve) => {
-    const child = spawn(command, argv, { cwd: root, windowsHide: true, shell: false });
+    const child = spawnCommand(status.hyperframesPath, args, { cwd: root });
     let log = '';
     const push = (c) => { if (log.length < config.maxToolOutput) log += c.toString(); };
     child.stdout.on('data', push);

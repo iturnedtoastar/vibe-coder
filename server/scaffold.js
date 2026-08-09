@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { spawnCommand } from './spawn-win.js';
 import { config, getWorkspaceRoot, isFolderOpen } from './config.js';
 
 /**
@@ -104,12 +105,9 @@ export function scaffoldStatus({ force = false } = {}) {
 
 function runNpx(args, { onOutput, timeoutMs = 900000 } = {}) {
   const npx = have('npx');
-  const needsShell = isWin && npx && !npx.toLowerCase().endsWith('.exe');
-  const command = needsShell ? (process.env.ComSpec || 'cmd.exe') : npx;
-  const argv = needsShell ? ['/d', '/s', '/c', npx, ...args] : args;
 
   return new Promise((resolve) => {
-    const child = spawn(command, argv, {
+    const child = spawnCommand(npx, args, {
       cwd: getWorkspaceRoot(),
       windowsHide: true,
       // Generators prompt by default; CI makes them take the defaults instead

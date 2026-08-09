@@ -214,6 +214,37 @@ app.whenReady().then(async () => {
     ipcMain.handle('vibe:reveal-folder', () => shell.openPath(backend.getRoot()));
 
     /**
+     * Capture a region of the window as a PNG data URL.
+     *
+     * Used to show the agent its own output: it writes code against a described
+     * viewport but has never been able to look at the result. Capturing from
+     * the main process avoids needing a canvas library in the renderer, and
+     * works even though the preview lives in a cross-document iframe.
+     */
+    ipcMain.handle('vibe:capture', async (_e, rect) => {
+      try {
+        const scale = mainWindow.webContents.zoomFactor || 1;
+        const area = rect && rect.width > 8 && rect.height > 8
+          ? {
+              x: Math.max(0, Math.round(rect.x * scale)),
+              y: Math.max(0, Math.round(rect.y * scale)),
+              width: Math.round(rect.width * scale),
+              height: Math.round(rect.height * scale),
+            }
+          : undefined;
+
+        const image = await mainWindow.webContents.capturePage(area);
+        // Keep it well under model image limits without losing legibility.
+        const sized = image.getSize().width > 1400
+          ? image.resize({ width: 1400, quality: 'good' })
+          : image;
+        return { dataUrl: sized.toDataURL() };
+      } catch (err) {
+        return { error: err.message };
+      }
+    });
+
+    /**
      * Wipe everything the app stores about itself: editor state, settings and
      * cached data. Project folders on disk are never touched — deleting a
      * user's actual work from a "clear cache" button would be indefensible.

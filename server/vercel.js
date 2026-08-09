@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { spawn, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { spawnCommand } from './spawn-win.js';
 import { config, getWorkspaceRoot, isFolderOpen } from './config.js';
 
 /**
@@ -86,12 +87,8 @@ function runSync(bin, args) {
 }
 
 function run(bin, args, { onOutput, timeoutMs = 900000 } = {}) {
-  const needsShell = isWin && !bin.toLowerCase().endsWith('.exe');
-  const command = needsShell ? (process.env.ComSpec || 'cmd.exe') : bin;
-  const argv = needsShell ? ['/d', '/s', '/c', bin, ...args] : args;
-
   return new Promise((resolve) => {
-    const child = spawn(command, argv, {
+    const child = spawnCommand(bin, args, {
       cwd: getWorkspaceRoot(),
       windowsHide: true,
       // Never let the CLI block on an interactive prompt in a headless context.
