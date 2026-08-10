@@ -20,6 +20,7 @@ import { mediaToolAvailable } from './tools.js';
 import { videoStatus, renderVideo } from './video.js';
 import { vercelStatus, deployToVercel, connectVercelGit } from './vercel.js';
 import { scaffoldStatus, scaffold, COMPONENT_GUIDANCE } from './scaffold.js';
+import { buildProjectMap } from './projectmap.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.htm', '.css',
@@ -85,8 +86,9 @@ let APP_VERSION = process.env.npm_package_version || '1.0.0';
  * Kept out of the system prompt on purpose: that block is the cached prefix,
  * and anything that changes between turns invalidates it.
  */
-function withVolatileContext(messages, previewContext, folder) {
-  const contract = describePreviewContract(previewContext, folder);
+function withVolatileContext(messages, previewContext, folder, projectMap = '') {
+  const contract = [describePreviewContract(previewContext, folder), projectMap]
+    .filter(Boolean).join('\n');
   if (!contract || !messages.length) return messages;
 
   const out = messages.slice();
@@ -641,6 +643,10 @@ export function createServer({ token, version } = {}) {
     });
     res.flushHeaders?.();
 
+    // Computed locally and handed over up front, so the agent does not spend
+    // billed round-trips discovering what is already on disk.
+    const projectMap = await buildProjectMap();
+
     const controller = new AbortController();
     // Abort on the RESPONSE closing, not the request. `req`'s close fires as
     // soon as the request body has been consumed — which for a buffered JSON
@@ -667,11 +673,11 @@ export function createServer({ token, version } = {}) {
         // rides on the newest user message instead. Mixing them meant every
         // pane resize silently invalidated the cache and re-billed the whole
         // prefix at full price.
-        messages: withVolatileContext(messages, previewContext, folder),
+        messages: withVolatileContext(messages, previewContext, folder, projectMap),
         system: (system || SYSTEM_PROMPT) + COMPONENT_GUIDANCE,
         useTools,
         sessionId,
-        previewContext: describePreviewContract(previewContext, folder),
+        previewContext: describePreviewContract(previewContext, folder) + projectMap,
         // Claude Code owns the transcript; the client keeps its session id so
         // follow-up turns reattach to the same conversation.
         onSession: (id) => emit({ type: 'session', id }),
