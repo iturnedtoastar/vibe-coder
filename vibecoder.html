@@ -2998,7 +2998,53 @@
                 // CLI providers edit files directly; the watcher may lag, so
                 // make sure the editor reflects disk once the turn is over.
                 VibeBackend.pullWorkspace('Agent edit');
+                checkForNewErrors();
             }
+        }
+
+        // --- POST-RUN VERIFICATION ---
+        //
+        // The agent stops when it thinks it is finished; the preview only
+        // reloads afterwards. If those edits broke the page, nothing connects
+        // the two — the run reads as a success and you find the error yourself.
+        // So we look once the reload has settled, and if the page is now
+        // throwing, offer to hand the error straight back.
+        //
+        // Deliberately an offer, not an automatic retry: continuing costs
+        // another full run, and that has to be your call, not a silent one.
+
+        function checkForNewErrors() {
+            clearRuntimeErrors();
+            setTimeout(() => {
+                const errors = runtimeErrors.filter(e => e.level === 'error');
+                if (!errors.length) return;
+
+                const summary = errors.slice(0, 3)
+                    .map(e => escapeHtml(e.text.slice(0, 140)))
+                    .join('<br>');
+                const more = errors.length > 3 ? `<br><span class="text-white/40">+${errors.length - 3} more</span>` : '';
+
+                renderAIChatMessage('bot', `
+                    <div class="border border-red-500/30 bg-red-500/[0.07] rounded-lg p-3">
+                        <div class="text-[11px] font-semibold text-red-300/90 mb-1.5">The preview is throwing after these changes</div>
+                        <div class="text-[11px] font-mono text-white/70 leading-relaxed break-words">${summary}${more}</div>
+                        <button onclick="sendErrorsToAgent()" class="mt-2.5 text-[11px] px-2.5 py-1.5 rounded-md bg-white/10 hover:bg-white/20 border border-white/20 transition-colors">
+                            Fix ${errors.length === 1 ? 'it' : 'them'}
+                        </button>
+                    </div>
+                `);
+            }, 1500);
+        }
+
+        function sendErrorsToAgent() {
+            const errors = runtimeErrors.filter(e => e.level === 'error');
+            if (!errors.length || agentBusy) return;
+
+            const input = document.getElementById('ai-input');
+            input.value = 'The preview is throwing these errors after your changes. '
+                + 'Find the cause and fix it:\n\n'
+                + errors.map(e => `- ${e.text}`).join('\n');
+            submitAIQuery();
         }
 
         // --- CHAT RENDERING ---
@@ -4566,6 +4612,8 @@
                 viewport: device
                     ? { width: device.clientWidth, height: device.clientHeight }
                     : null,
+                // What the page actually did when it last ran.
+                errors: runtimeErrors.map(e => ({ ...e })),
             };
         }
 
@@ -4779,7 +4827,9 @@
                 }
 
                 const iframe = document.getElementById('preview-iframe');
-                
+
+                // Errors belong to the code that ran, not the code about to run.
+                clearRuntimeErrors();
                 iframe.srcdoc = '';
                 setTimeout(() => {
                     iframe.srcdoc = finalCode;
@@ -5208,9 +5258,40 @@
             }
         });
         
+        // --- RUNTIME ERROR FEEDBACK ---
+        //
+        // The agent can see the preview but not what the preview *did*. Without
+        // this the loop is: it writes code, the page throws, and nothing tells
+        // it — you have to notice the red line and paste it back. Errors are
+        // kept here as plain text and handed to the agent with the next
+        // message, so it debugs from the actual failure instead of guessing.
+
+        const runtimeErrors = [];
+        const MAX_RUNTIME_ERRORS = 12;
+
+        function recordRuntimeError(level, args) {
+            const text = args
+                .map(a => (a && typeof a === 'object' && 'v' in a) ? String(a.v) : String(a))
+                .join(' ')
+                .trim();
+            if (!text) return;
+
+            // The same error usually fires on every frame or every keystroke.
+            // Counting repeats keeps one real failure from filling the budget.
+            const existing = runtimeErrors.find(e => e.text === text && e.level === level);
+            if (existing) { existing.count++; return; }
+
+            runtimeErrors.push({ level, text: text.slice(0, 400), count: 1 });
+            if (runtimeErrors.length > MAX_RUNTIME_ERRORS) runtimeErrors.shift();
+        }
+
+        /** Errors are about the code that produced them, so a reload clears them. */
+        function clearRuntimeErrors() { runtimeErrors.length = 0; }
+
         function appendLog(level, args) {
+            if (level === 'error' || level === 'warn') recordRuntimeError(level, args);
             const el = document.createElement('div'); el.className = `log-entry log-${level}`;
-            const message = args.map(arg => { 
+            const message = args.map(arg => {
                 if (arg && typeof arg === 'object' && arg.t) {
                     const safeVal = String(arg.v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
                     if (level === 'error' || level === 'warn') return safeVal; 

@@ -103,7 +103,7 @@ function withVolatileContext(messages, previewContext, folder, projectMap = '') 
   return out;
 }
 
-function describePreviewContract(ctx, folder) {
+export function describePreviewContract(ctx, folder) {
   if (!ctx) return '';
 
   const lines = [
@@ -144,7 +144,37 @@ function describePreviewContract(ctx, folder) {
     + 'existing entry file over creating new pages, unless asked for a new page.'
   );
 
-  return lines.join('\n');
+  lines.push(describeRuntimeErrors(ctx.errors));
+
+  return lines.filter(Boolean).join('\n');
+}
+
+/**
+ * What the preview threw on its last run.
+ *
+ * These are the errors the user would otherwise have to read off the console
+ * and paste back. Handing them over unprompted is what turns "write it and
+ * hope" into "write it, see what broke, fix it" without a human in the middle.
+ */
+function describeRuntimeErrors(errors) {
+  if (!Array.isArray(errors) || !errors.length) return '';
+
+  const shown = errors.slice(-8).map((e) => {
+    const repeat = e.count > 1 ? ` (×${e.count})` : '';
+    return `- [${e.level}] ${String(e.text).slice(0, 400)}${repeat}`;
+  });
+
+  return [
+    '',
+    '## Errors from the running preview',
+    '',
+    'These came from the page as it last ran, not from a build step. They are',
+    'the current state of the code you are about to change — if one of them is',
+    'related to the task, fix it as part of the work rather than reporting it',
+    'back. If none are related, leave them alone and do not mention them.',
+    '',
+    ...shown,
+  ].join('\n');
 }
 
 
