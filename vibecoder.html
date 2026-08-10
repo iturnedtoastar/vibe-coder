@@ -249,7 +249,7 @@
         </div>
     </div>
 
-    <!-- Quick Switcher Modal (Cmd+P) -->
+    <!-- Quick Switcher Modal (Ctrl+P) -->
     <div id="cmd-p-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[9999] hidden items-start justify-center pt-[15vh] opacity-0 transition-opacity">
         <div class="bg-[#121212] border border-white/20 rounded-2xl w-full max-w-lg shadow-2xl flex flex-col overflow-hidden transform scale-95 transition-transform" id="cmd-p-box">
             <div class="p-4 border-b border-white/10 flex items-center gap-3 bg-white/5">
@@ -285,7 +285,7 @@
             </button>
 
             <!-- Explorer Button -->
-            <button onclick="toggleExplorer()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-[11px] lg:text-xs rounded-lg transition-colors border border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]" title="Project Explorer (Cmd+B)">
+            <button onclick="toggleExplorer()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white text-[11px] lg:text-xs rounded-lg transition-colors border border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]" title="Project Explorer (Ctrl+B)" data-kbd="Project Explorer">
                 <i data-lucide="folder-tree" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">Explorer</span>
             </button>
 
@@ -347,7 +347,7 @@
                 <label for="auto-run" class="cursor-pointer select-none">Auto-run</label>
             </div>
 
-            <button onclick="toggleAIDrawer()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-200 text-black text-xs font-semibold rounded-lg transition-colors shadow-[0_0_15px_rgba(255,255,255,0.2)]" title="Vibe Agent (Cmd+K)">
+            <button onclick="toggleAIDrawer()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-gray-200 text-black text-xs font-semibold rounded-lg transition-colors shadow-[0_0_15px_rgba(255,255,255,0.2)]" title="Vibe Agent (Ctrl+K)" data-kbd="Vibe Agent">
                 <svg class="vibe-mark w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path class="facet-l" d="M2 9h20" stroke-width="1.2"/><path class="facet-r" d="M6 3l2 6 4 12 4-12 2-6" stroke-width="1.2"/></svg> <span class="hidden sm:inline">Vibe Agent</span>
             </button>
             <button data-collapse="4" onclick="openMCPModal()" class="flex items-center gap-1.5 px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white/80 text-xs rounded-lg transition-colors border border-white/10" title="Manage MCP Connections">
@@ -720,7 +720,7 @@
                     <span id="ai-backend-status" class="text-[9px] text-white/40 uppercase tracking-widest font-semibold flex items-center gap-1 transition-colors">
                         <i data-lucide="loader-2" class="w-3 h-3 animate-spin"></i> Checking Status...
                     </span>
-                    <span class="text-[9px] text-white/30 font-mono">Cmd + K</span>
+                    <span class="text-[9px] text-white/30 font-mono" id="kbd-hint">Ctrl + K</span>
                 </div>
             </div>
         </div>
@@ -1074,7 +1074,7 @@
             }, 3000);
         }
 
-        // --- COMMAND PALETTE (CMD+P) QUICK SWITCHER ---
+        // --- COMMAND PALETTE (Ctrl+P / Cmd+P) QUICK SWITCHER ---
         document.addEventListener('keydown', (e) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
                 e.preventDefault();
@@ -2441,21 +2441,47 @@
                 .catch(() => showToast('Could not copy.', 'error'));
         }
 
-        function toolChip(name, input, state) {
-            const icon = TOOL_ICONS[name] || 'wrench';
-            const detail = input?.path || input?.command || input?.pattern || '';
-            const tone = state === 'error'
-                ? 'bg-red-500/10 border-red-500/30 text-red-300'
-                : state === 'done'
-                    ? 'bg-white/10 border-white/20 text-white'
-                    : 'bg-white/5 border-white/10 text-white/60';
-            const spinner = state === 'running'
-                ? '<span class="w-1.5 h-1.5 rounded-full bg-white/60 animate-pulse ml-auto"></span>' : '';
-            return `<div class="text-[10px] ${tone} border px-2 py-1.5 rounded mt-1.5 flex items-center gap-1.5 shadow-sm font-mono">
-                <i data-lucide="${icon}" class="w-3.5 h-3.5 shrink-0"></i>
-                <span class="truncate">${escapeHtml(name)}${detail ? ' · ' + escapeHtml(String(detail).slice(0, 60)) : ''}</span>${spinner}
-            </div>`;
+        /**
+         * One line per tool call: what it did, to what, and how long it took.
+         *
+         * The old version rendered a bare "tool" for every call because the
+         * result event carries no name — dozens of identical rows that told you
+         * nothing. Compact single lines, failures readable inline.
+         */
+        const TOOL_VERBS = {
+            read_file: 'Read', write_file: 'Wrote', edit_file: 'Edited',
+            delete_file: 'Deleted', list_files: 'Listed', search: 'Searched',
+            run_command: 'Ran', download_media: 'Downloaded', render_video: 'Rendered',
+            deploy_vercel: 'Deployed', connect_vercel_git: 'Linked',
+            scaffold_project: 'Scaffolded', add_vercel_insights: 'Installed',
+        };
+
+        function renderToolChip(chip) {
+            const icon = TOOL_ICONS[chip.name] || 'wrench';
+            const verb = TOOL_VERBS[chip.name] || chip.name;
+            const target = chip.input?.path || chip.input?.command
+                || chip.input?.pattern || chip.input?.url || chip.input?.template || '';
+
+            const tone = chip.state === 'error' ? 'text-white' : 'text-white/45';
+            const timing = chip.ms != null && chip.ms > 400
+                ? `<span class="text-white/25 tabular-nums shrink-0">${(chip.ms / 1000).toFixed(1)}s</span>` : '';
+
+            const mark = chip.state === 'running'
+                ? '<span class="w-1.5 h-1.5 rounded-full bg-white/50 animate-pulse shrink-0"></span>'
+                : chip.state === 'error'
+                    ? '<i data-lucide="x" class="w-3 h-3 shrink-0"></i>'
+                    : `<i data-lucide="${icon}" class="w-3 h-3 shrink-0 opacity-60"></i>`;
+
+            return `
+                <div class="flex items-center gap-2 text-[11px] ${tone} font-mono leading-5" title="${escapeAttr(chip.name + (target ? ' · ' + target : ''))}">
+                    ${mark}
+                    <span class="shrink-0">${escapeHtml(verb)}</span>
+                    ${target ? `<span class="truncate text-white/30">${escapeHtml(String(target).slice(0, 70))}</span>` : ''}
+                    ${timing}
+                </div>
+                ${chip.error ? `<div class="pl-5 text-[10px] text-white/40 leading-tight">${escapeHtml(chip.error.slice(0, 140))}</div>` : ''}`;
         }
+
 
         // --- ATTACHMENTS ---
         // Text files are inlined into the prompt so every provider can read
@@ -2674,23 +2700,41 @@
             return `${(n / 1000000).toFixed(1)}M`;
         }
 
+        /**
+         * A dollar figure is only meaningful on pay-as-you-go API billing.
+         * On a Pro/Max subscription the CLI still reports what the tokens
+         * *would* cost, but you are not billed it — showing "$0.59" there
+         * invents a charge that does not exist.
+         */
+        function billsPerToken() {
+            const provider = editorSettings.provider || 'anthropic';
+            const isCli = Object.prototype.hasOwnProperty.call(
+                VibeBackend.status?.cliAgents || {}, provider
+            );
+            if (isCli) return false;              // signed in — subscription or included
+            if (provider === 'ollama') return false;   // local, free
+            return true;                          // API key = metered
+        }
+
         function recordUsage(usage, msgId) {
             const input = (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0);
             const output = usage.outputTokens || 0;
-            if (!input && !output && usage.costUsd == null) return;
+            if (!input && !output) return;
 
             sessionUsage.inputTokens += input;
             sessionUsage.outputTokens += output;
-            if (typeof usage.costUsd === 'number') {
+            if (typeof usage.costUsd === 'number' && billsPerToken()) {
                 sessionUsage.costUsd += usage.costUsd;
                 sessionUsage.hasCost = true;
             }
 
-            // Per-turn line under the message it belongs to.
             const row = document.getElementById(msgId);
             if (row && !row.querySelector('.msg-usage')) {
                 const bits = [`${formatTokens(input)} in`, `${formatTokens(output)} out`];
-                if (typeof usage.costUsd === 'number') bits.push(`$${usage.costUsd.toFixed(4)}`);
+                if (usage.cacheReadTokens) bits.push(`${formatTokens(usage.cacheReadTokens)} cached`);
+                if (typeof usage.costUsd === 'number' && billsPerToken()) {
+                    bits.push(`$${usage.costUsd.toFixed(4)}`);
+                }
                 const el = document.createElement('div');
                 el.className = 'msg-usage text-[9px] text-white/25 mt-1 font-mono tabular-nums';
                 el.textContent = bits.join(' · ');
@@ -2711,7 +2755,8 @@
                 ? `${formatTokens(total)} tokens · $${sessionUsage.costUsd.toFixed(3)}`
                 : `${formatTokens(total)} tokens`;
             el.title = `${sessionUsage.inputTokens.toLocaleString()} in, `
-                + `${sessionUsage.outputTokens.toLocaleString()} out this session`;
+                + `${sessionUsage.outputTokens.toLocaleString()} out this session`
+                + (billsPerToken() ? '' : ' — included in your plan, not billed per token');
         }
 
         // --- LETTING THE AGENT SEE THE PREVIEW ---
@@ -2791,17 +2836,35 @@
             pendingAttachments = [];
             renderAttachments();
 
-            // Send the rendered preview alongside the question so the agent can
-            // see what it's changing. Text-only if capture isn't available.
             const shot = previewVisionEnabled() ? await capturePreview() : null;
             aiChatHistory.push({
                 role: 'user',
-                content: shot
-                    ? [{ type: 'text', text: content }, shot]
-                    : content,
+                content: shot ? [{ type: 'text', text: content }, shot] : content,
             });
 
+            // A screenshot is ~1-2k tokens and the whole history is resent on
+            // every turn, so keeping old ones would re-bill every past image
+            // forever. Only the newest is worth anything anyway — the older
+            // ones show states that no longer exist.
+            pruneOldImages();
+
             await streamAgentTurn();
+        }
+
+        /** Strip images from all but the most recent user message. */
+        function pruneOldImages() {
+            let seenNewest = false;
+            for (let i = aiChatHistory.length - 1; i >= 0; i--) {
+                const msg = aiChatHistory[i];
+                if (!Array.isArray(msg.content)) continue;
+                const hasImage = msg.content.some(p => p.type === 'image');
+                if (!hasImage) continue;
+
+                if (!seenNewest) { seenNewest = true; continue; }
+
+                const text = msg.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
+                msg.content = text || '(screenshot omitted)';
+            }
         }
 
         /**
@@ -2822,15 +2885,33 @@
             await VibeBackend.syncWorkspace();
 
             let text = '';
+            let thinking = '';
             const chips = new Map();
+            const startedAt = Date.now();
+
             const paint = () => {
+                const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
                 const body = text
                     ? renderMarkdown(text)
-                    : '<span class="vibe-shimmer text-[12px]">Working…</span>';
-                const tools = chips.size
-                    ? `<div class="mt-2 space-y-1">${[...chips.values()].join('')}</div>`
+                    : `<span class="vibe-shimmer text-[12px]">Thinking… ${elapsed}s</span>`;
+
+                // Reasoning, collapsed by default — visible when you want it,
+                // out of the way when you don't.
+                const reasoning = thinking.trim()
+                    ? `<details class="mt-2 group/think">
+                         <summary class="cursor-pointer text-[10px] text-white/30 hover:text-white/60 transition-colors list-none flex items-center gap-1">
+                           <i data-lucide="chevron-right" class="w-3 h-3 transition-transform group-open/think:rotate-90"></i>
+                           Reasoning
+                         </summary>
+                         <div class="mt-1 pl-3 border-l border-white/10 text-[11px] text-white/45 leading-relaxed whitespace-pre-wrap">${escapeHtml(thinking.trim())}</div>
+                       </details>`
                     : '';
-                updateAIChatMessage(msgId, body + tools);
+
+                const tools = chips.size
+                    ? `<div class="mt-2 space-y-1">${[...chips.values()].map(renderToolChip).join('')}</div>`
+                    : '';
+
+                updateAIChatMessage(msgId, body + reasoning + tools);
                 lucide.createIcons();
             };
 
@@ -2842,11 +2923,29 @@
                             paint();
                             break;
                         case 'tool_use':
-                            chips.set(event.id, toolChip(event.name, event.input, 'running'));
+                            // Keep the call's own name and target. The result
+                            // event carries neither, so overwriting the chip
+                            // with it was what produced a wall of bare "tool".
+                            chips.set(event.id, {
+                                name: event.name,
+                                input: event.input || {},
+                                state: 'running',
+                                started: Date.now(),
+                            });
                             paint();
                             break;
-                        case 'tool_result':
-                            chips.set(event.id, toolChip(event.name, {}, event.ok ? 'done' : 'error'));
+                        case 'tool_result': {
+                            const chip = chips.get(event.id);
+                            if (chip) {
+                                chip.state = event.ok ? 'done' : 'error';
+                                chip.ms = Date.now() - chip.started;
+                                if (!event.ok) chip.error = String(event.content || '').split('\n')[0];
+                            }
+                            paint();
+                            break;
+                        }
+                        case 'thinking':
+                            thinking += event.text;
                             paint();
                             break;
                         case 'error':
@@ -3867,6 +3966,15 @@
             // Running as the desktop app: the header becomes the title bar,
             // Open Folder appears, and the manual backend settings (a browser-
             // only fallback) are hidden.
+            // Shortcut hints must name the key this platform actually uses.
+            if (window.vibeDesktop?.platform === 'darwin') {
+                const hint = document.getElementById('kbd-hint');
+                if (hint) hint.textContent = 'Cmd + K';
+                document.querySelectorAll('[data-kbd]').forEach(el => {
+                    el.title = `${el.dataset.kbd} (${el.title.match(/\(([^)]+)\)/)?.[1]?.replace('Ctrl', 'Cmd') || ''})`;
+                });
+            }
+
             if (window.vibeDesktop) {
                 document.body.classList.add('desktop-shell');
                 if (window.vibeDesktop.platform === 'darwin') {
