@@ -90,6 +90,13 @@ export const CLI_AGENTS = {
           cacheReadTokens: msg.usage?.cache_read_input_tokens || 0,
           cacheWriteTokens: msg.usage?.cache_creation_input_tokens || 0,
           costUsd: msg.total_cost_usd,
+          // The CLI knows things the API doesn't: wall time, how many model
+          // round-trips it took, and which models it actually used.
+          durationMs: msg.duration_ms,
+          apiMs: msg.duration_api_ms,
+          turns: msg.num_turns,
+          models: msg.modelUsage ? Object.keys(msg.modelUsage) : undefined,
+          source: 'cli',
         });
         if (msg.is_error) emit.fail(msg.result || msg.subtype || 'Claude Code reported an error.');
       }

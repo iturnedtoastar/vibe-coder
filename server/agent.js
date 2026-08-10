@@ -93,17 +93,32 @@ export async function* runAgent({
 
   // A run is many turns; usage events arrive per turn, so total them up.
   const usage = {
-    inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0,
+    inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
+    costUsd: 0, durationMs: 0, turns: 0,
+    // Which billing world this ran in. CLI providers bill against a
+    // subscription; API providers bill per token.
+    source: adapter.usesOwnTools ? 'cli' : (adapter.local ? 'local' : 'api'),
   };
   let sawCost = false;
+  const startedAt = Date.now();
 
   const accumulate = (event) => {
     usage.inputTokens += event.inputTokens || 0;
     usage.outputTokens += event.outputTokens || 0;
     usage.cacheReadTokens += event.cacheReadTokens || 0;
     usage.cacheWriteTokens += event.cacheWriteTokens || 0;
+    usage.durationMs += event.durationMs || 0;
+    usage.turns += event.turns || 0;
+    if (event.models) usage.models = event.models;
     if (typeof event.costUsd === 'number') { usage.costUsd += event.costUsd; sawCost = true; }
   };
+
+  const finalUsage = () => ({
+    ...usage,
+    costUsd: sawCost ? usage.costUsd : null,
+    // API providers report no wall time, so measure it here.
+    durationMs: usage.durationMs || (Date.now() - startedAt),
+  });
 
   try {
     for (let iteration = 0; iteration < config.agent.maxIterations; iteration++) {
@@ -136,7 +151,7 @@ export async function* runAgent({
           type: 'done',
           changedFiles: [...changedFiles],
           iterations: iteration + 1,
-          usage: { ...usage, costUsd: sawCost ? usage.costUsd : null },
+          usage: finalUsage(),
         };
         return;
       }
@@ -173,7 +188,7 @@ export async function* runAgent({
       type: 'done',
       changedFiles: [...changedFiles],
       iterations: config.agent.maxIterations,
-      usage: { ...usage, costUsd: sawCost ? usage.costUsd : null },
+      usage: finalUsage(),
     };
   } catch (err) {
     if (signal?.aborted) return;

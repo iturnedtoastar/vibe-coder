@@ -28,12 +28,31 @@ function toolSchema(tools) {
 }
 
 function buildParams({ model, system, history, tools }) {
+  const toolDefs = toolSchema(tools);
+
+  // Prompt caching. The system prompt and tool schemas are identical on every
+  // turn of a run but were being re-sent and re-billed at full price each time
+  // — on a long agent run that is most of the input cost. Marking the end of
+  // the tools block caches everything before it, so subsequent turns pay the
+  // ~10% cache-read rate instead.
+  //
+  // The breakpoint goes on the LAST tool rather than the system prompt so the
+  // cached prefix covers both.
+  if (toolDefs.length) {
+    toolDefs[toolDefs.length - 1] = {
+      ...toolDefs[toolDefs.length - 1],
+      cache_control: { type: 'ephemeral' },
+    };
+  }
+
   const params = {
     model,
     max_tokens: config.agent.maxTokens,
-    system,
+    system: toolDefs.length
+      ? system
+      : [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
     messages: history,
-    tools: toolSchema(tools),
+    tools: toolDefs,
   };
 
   if (ADAPTIVE.test(model)) {

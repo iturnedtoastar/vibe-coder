@@ -79,13 +79,36 @@ let APP_VERSION = process.env.npm_package_version || '1.0.0';
  * the result into an iframe. A model that doesn't know this writes a perfectly
  * correct page with <link href="styles.css"> that silently renders unstyled.
  */
-function describePreviewContract(ctx) {
+/**
+ * Attach the volatile workspace context to the newest user message.
+ *
+ * Kept out of the system prompt on purpose: that block is the cached prefix,
+ * and anything that changes between turns invalidates it.
+ */
+function withVolatileContext(messages, previewContext, folder) {
+  const contract = describePreviewContract(previewContext, folder);
+  if (!contract || !messages.length) return messages;
+
+  const out = messages.slice();
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i].role !== 'user') continue;
+    const msg = out[i];
+    out[i] = Array.isArray(msg.content)
+      ? { ...msg, content: [{ type: 'text', text: contract }, ...msg.content] }
+      : { ...msg, content: `${contract}\n\n---\n\n${msg.content}` };
+    break;
+  }
+  return out;
+}
+
+function describePreviewContract(ctx, folder) {
   if (!ctx) return '';
 
   const lines = [
     '',
     '## How the live preview works',
     '',
+    folder ? `The open folder is "${folder}".` : '',
     'The preview is an iframe built from the project files — NOT a web server.',
     `- It renders one entry file: ${ctx.entry || '(no HTML file yet — create index.html)'}`,
     '- Every .css file in the project is concatenated and injected into that page.',
@@ -110,9 +133,8 @@ function describePreviewContract(ctx) {
     );
   }
 
-  // components.build is a specification, not a package — it's most useful as
-  // instruction the agent follows while writing UI.
-  lines.push(COMPONENT_GUIDANCE);
+  // components.build guidance is stable, so it lives in the cached system
+  // prompt rather than being re-sent here on every turn.
 
   lines.push(
     '',
@@ -640,13 +662,16 @@ export function createServer({ token, version } = {}) {
         model,
         apiKey,
         baseUrl,
-        messages,
-        system: (system || SYSTEM_PROMPT)
-          + `\n\nThe open folder is "${folder}" (${getWorkspaceRoot()}).`
-          + describePreviewContract(previewContext),
+        // The system prompt is the cached prefix, so it must be byte-identical
+        // across turns. Anything volatile — the viewport size, the file list —
+        // rides on the newest user message instead. Mixing them meant every
+        // pane resize silently invalidated the cache and re-billed the whole
+        // prefix at full price.
+        messages: withVolatileContext(messages, previewContext, folder),
+        system: (system || SYSTEM_PROMPT) + COMPONENT_GUIDANCE,
         useTools,
         sessionId,
-        previewContext: describePreviewContract(previewContext),
+        previewContext: describePreviewContract(previewContext, folder),
         // Claude Code owns the transcript; the client keeps its session id so
         // follow-up turns reattach to the same conversation.
         onSession: (id) => emit({ type: 'session', id }),

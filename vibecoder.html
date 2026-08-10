@@ -2730,17 +2730,33 @@
 
             const row = document.getElementById(msgId);
             if (row && !row.querySelector('.msg-usage')) {
-                const bits = [`${formatTokens(input)} in`, `${formatTokens(output)} out`];
+                // Separate fresh tokens from cache traffic. They are not the
+                // same thing: a cache read bills at roughly a tenth of a fresh
+                // input token, so lumping them together makes a cheap turn look
+                // enormous — which is exactly what a 55k "total" was hiding.
+                const bits = [];
+                if (usage.durationMs) bits.push(`${(usage.durationMs / 1000).toFixed(1)}s`);
+                if (usage.turns > 1) bits.push(`${usage.turns} turns`);
+                bits.push(`${formatTokens(usage.inputTokens || 0)}↑ ${formatTokens(output)}↓`);
                 if (usage.cacheReadTokens) bits.push(`${formatTokens(usage.cacheReadTokens)} cached`);
+                if (usage.cacheWriteTokens) bits.push(`${formatTokens(usage.cacheWriteTokens)} new cache`);
                 if (typeof usage.costUsd === 'number' && billsPerToken()) {
                     bits.push(`$${usage.costUsd.toFixed(4)}`);
                 }
+
                 const el = document.createElement('div');
                 el.className = 'msg-usage text-[9px] text-white/25 mt-1 font-mono tabular-nums';
                 el.textContent = bits.join(' · ');
+                el.title = usage.source === 'cli'
+                    ? 'Billed against your subscription, not per token'
+                    : usage.source === 'local'
+                        ? 'Ran locally — no billing'
+                        : 'Billed per token via your API key';
                 row.querySelector('.msg-actions')?.insertAdjacentElement('afterend', el);
             }
 
+            sessionUsage.cacheReadTokens = (sessionUsage.cacheReadTokens || 0) + (usage.cacheReadTokens || 0);
+            sessionUsage.source = usage.source;
             renderSessionUsage();
         }
 
@@ -2751,12 +2767,24 @@
             if (!total) { el.classList.add('hidden'); return; }
 
             el.classList.remove('hidden');
+
+            // Headline the tokens that actually cost something. Cache reads are
+            // the bulk of the raw number and the cheapest part of it, so they
+            // belong in the tooltip rather than the headline.
+            const cached = sessionUsage.cacheReadTokens || 0;
+            const billed = Math.max(total - cached, 0);
+
             el.textContent = sessionUsage.hasCost
-                ? `${formatTokens(total)} tokens · $${sessionUsage.costUsd.toFixed(3)}`
-                : `${formatTokens(total)} tokens`;
-            el.title = `${sessionUsage.inputTokens.toLocaleString()} in, `
-                + `${sessionUsage.outputTokens.toLocaleString()} out this session`
-                + (billsPerToken() ? '' : ' — included in your plan, not billed per token');
+                ? `${formatTokens(billed)} · $${sessionUsage.costUsd.toFixed(3)}`
+                : `${formatTokens(billed)} tokens`;
+
+            el.title = [
+                `${sessionUsage.inputTokens.toLocaleString()} input`,
+                `${sessionUsage.outputTokens.toLocaleString()} output`,
+                cached ? `${cached.toLocaleString()} cache reads (~10% price)` : null,
+                sessionUsage.source === 'cli' ? 'Subscription — not billed per token' : null,
+                sessionUsage.source === 'local' ? 'Local model — free' : null,
+            ].filter(Boolean).join(' · ');
         }
 
         // --- LETTING THE AGENT SEE THE PREVIEW ---
