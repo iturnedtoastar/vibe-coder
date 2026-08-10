@@ -20,6 +20,28 @@ export const PROVIDERS = {
 
 const MUTATING_TOOLS = new Set(['write_file', 'edit_file', 'delete_file', 'run_command']);
 
+/**
+ * Cheap models, per provider.
+ *
+ * Most turns in a run are comprehension — digesting a file that was just read,
+ * deciding what to look at next — not creation. A measured run showed the same
+ * work costing $0.0006 on a small model against $0.1487 on a frontier one.
+ * Planning and reading go here; writing code does not.
+ */
+export const CHEAP_MODELS = {
+  anthropic: 'claude-haiku-4-5-20251001',
+  openai: 'gpt-4o-mini',
+  google: 'gemini-2.5-flash',
+};
+
+/** The cheap counterpart of `model`, or null when there isn't a safe one. */
+export function cheapModelFor(provider, model) {
+  const cheap = CHEAP_MODELS[provider];
+  if (!cheap || !model) return null;
+  // Already on the cheap model — nothing to route down to.
+  return model === cheap ? null : cheap;
+}
+
 export const SYSTEM_PROMPT = `You are Vibe Agent, the coding agent built into the Vibe Coder IDE.
 
 You work inside a sandboxed workspace directory. Every path you use is relative
@@ -75,6 +97,9 @@ export async function* runAgent({
   messages,
   system,
   useTools = true,
+  // Planning looks at the project but must not change it. With this set the
+  // mutating tools are never offered, so a plan cannot quietly become an edit.
+  readOnly = false,
   sessionId,
   onSession,
   previewContext,
@@ -97,7 +122,8 @@ export async function* runAgent({
 
   // Providers that run their own agent loop supply their own tools; handing
   // them ours would be meaningless and executing anything on their behalf wrong.
-  const tools = useTools && !adapter.usesOwnTools ? availableTools() : [];
+  let tools = useTools && !adapter.usesOwnTools ? availableTools() : [];
+  if (readOnly) tools = tools.filter((t) => !MUTATING_TOOLS.has(t.name));
   const history = adapter.toHistory(messages);
   const changedFiles = new Set();
 
@@ -166,12 +192,38 @@ export async function* runAgent({
         return;
       }
 
+      // Reads have no side effects and dominate a typical batch, so they run
+      // together instead of queueing behind each other — four file reads take
+      // as long as the slowest one, not the sum. Anything that mutates stays
+      // strictly sequential: two edits to one file must not interleave, and a
+      // command's effect has to land before the next call observes it.
+      const reads = toolCalls.filter((c) => !MUTATING_TOOLS.has(c.name));
+      const writes = toolCalls.filter((c) => MUTATING_TOOLS.has(c.name));
+
+      for (const call of toolCalls) {
+        yield { type: 'tool_use', id: call.id, name: call.name, input: call.input };
+      }
+
+      const outcomes = new Map();
+      if (reads.length) {
+        const settled = await Promise.all(
+          reads.map(async (call) => [call.id, await executeTool(call.name, call.input)])
+        );
+        for (const [id, result] of settled) outcomes.set(id, result);
+      }
+
+      for (const call of writes) {
+        if (signal?.aborted) return;
+        outcomes.set(call.id, await executeTool(call.name, call.input));
+      }
+
+      if (signal?.aborted) return;
+
+      // Reported in the order the model asked for them, whatever order they
+      // actually finished in — the transcript has to match the request.
       const results = [];
       for (const call of toolCalls) {
-        if (signal?.aborted) return;
-        yield { type: 'tool_use', id: call.id, name: call.name, input: call.input };
-
-        const result = await executeTool(call.name, call.input);
+        const result = outcomes.get(call.id);
         if (result.ok && MUTATING_TOOLS.has(call.name)) {
           if (call.input?.path) changedFiles.add(call.input.path);
           else changedFiles.add('*');

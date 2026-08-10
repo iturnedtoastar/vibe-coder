@@ -21,6 +21,7 @@ import { videoStatus, renderVideo } from './video.js';
 import { vercelStatus, deployToVercel, connectVercelGit } from './vercel.js';
 import { scaffoldStatus, scaffold, COMPONENT_GUIDANCE } from './scaffold.js';
 import { buildProjectMap } from './projectmap.js';
+import { buildPlan, planAsInstructions } from './planner.js';
 
 const TEXT_EXTENSIONS = new Set([
   '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.json', '.html', '.htm', '.css',
@@ -159,17 +160,31 @@ export function describePreviewContract(ctx, folder) {
 function describeRuntimeErrors(errors) {
   if (!Array.isArray(errors) || !errors.length) return '';
 
-  const shown = errors.slice(-8).map((e) => {
+  // A build failure means nothing ran at all, so it outranks anything the page
+  // managed to throw — it must never be the entry that gets cut for budget.
+  // Among the rest the newest win: an old error is often one already fixed.
+  const build = errors.filter((e) => e.level === 'build');
+  const runtime = errors.filter((e) => e.level !== 'build');
+  const ranked = [...build, ...runtime.slice(-Math.max(0, 8 - build.length))];
+
+  const shown = ranked.slice(0, 8).map((e) => {
     const repeat = e.count > 1 ? ` (×${e.count})` : '';
     return `- [${e.level}] ${String(e.text).slice(0, 400)}${repeat}`;
   });
 
+  const hasBuild = errors.some((e) => e.level === 'build');
+
   return [
     '',
-    '## Errors from the running preview',
+    '## Current errors',
     '',
-    'These came from the page as it last ran, not from a build step. They are',
-    'the current state of the code you are about to change — if one of them is',
+    hasBuild
+      ? '[build] lines came from the dev server and mean the project does not '
+        + 'compile — nothing runs until they are fixed. [error] and [warn] came '
+        + 'from the page itself as it last ran.'
+      : 'These came from the page as it last ran.',
+    '',
+    'They are the current state of the code you are about to change. If one is',
     'related to the task, fix it as part of the work rather than reporting it',
     'back. If none are related, leave them alone and do not mention them.',
     '',
@@ -649,6 +664,43 @@ export function createServer({ token, version } = {}) {
 
   // --------------------------------------------------------------- agent ---
 
+  /**
+   * Plan a task without touching anything.
+   *
+   * Cheap model, read-only tools, one response. Nothing here can change a file,
+   * so the answer is safe to show and throw away.
+   */
+  app.post('/api/plan', async (req, res) => {
+    const {
+      provider = 'anthropic', model, apiKey: clientKey, baseUrl,
+      messages = [], previewContext,
+    } = req.body || {};
+
+    const controller = new AbortController();
+    res.on('close', () => { if (!res.writableEnded) controller.abort(); });
+
+    try {
+      const folder = path.basename(getWorkspaceRoot());
+      const projectMap = await buildProjectMap();
+
+      const result = await buildPlan({
+        provider,
+        model,
+        apiKey: clientKey || config.keys[provider],
+        baseUrl,
+        messages: withVolatileContext(messages, previewContext, folder, projectMap),
+        previewContext: describePreviewContract(previewContext, folder) + projectMap,
+        signal: controller.signal,
+      });
+
+      res.json(result);
+    } catch (err) {
+      // Planning is an optimisation, never a gate. If it breaks, the caller
+      // runs the task directly rather than being blocked by it.
+      res.json({ error: err?.message || String(err) });
+    }
+  });
+
   app.post('/api/agent', async (req, res) => {
     const {
       provider = 'anthropic',
@@ -660,6 +712,8 @@ export function createServer({ token, version } = {}) {
       useTools = true,
       sessionId,
       previewContext,
+      // An approved plan, when the run came through the planning step.
+      plan,
     } = req.body || {};
 
     // A key typed into Settings wins; otherwise fall back to server/.env.
@@ -703,11 +757,14 @@ export function createServer({ token, version } = {}) {
         // rides on the newest user message instead. Mixing them meant every
         // pane resize silently invalidated the cache and re-billed the whole
         // prefix at full price.
-        messages: withVolatileContext(messages, previewContext, folder, projectMap),
+        messages: withVolatileContext(
+          messages, previewContext, folder, projectMap + planAsInstructions(plan)
+        ),
         system: (system || SYSTEM_PROMPT) + COMPONENT_GUIDANCE,
         useTools,
         sessionId,
-        previewContext: describePreviewContract(previewContext, folder) + projectMap,
+        previewContext: describePreviewContract(previewContext, folder)
+          + projectMap + planAsInstructions(plan),
         // Claude Code owns the transcript; the client keeps its session id so
         // follow-up turns reattach to the same conversation.
         onSession: (id) => emit({ type: 'session', id }),

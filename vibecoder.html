@@ -426,6 +426,10 @@
                             <span>Let the agent see the preview</span>
                             <input type="checkbox" id="setting-seepreview" onchange="updateSetting('seePreview', this.checked)" class="accent-white w-3.5 h-3.5">
                         </label>
+                        <label class="flex items-center justify-between p-1.5 text-[11px] text-white/80 hover:bg-white/5 rounded-lg cursor-pointer transition-colors" title="Plans bigger tasks on a cheap model first and shows you the plan before anything is changed">
+                            <span>Plan before making changes</span>
+                            <input type="checkbox" id="setting-planfirst" onchange="updateSetting('planFirst', this.checked)" class="accent-white w-3.5 h-3.5">
+                        </label>
                         <button onclick="resetApp()" class="w-full flex items-center gap-2 p-1.5 text-[11px] text-white/80 hover:text-white bg-white/5 hover:bg-white/15 border border-white/10 rounded-lg transition-colors">
                             <i data-lucide="eraser" class="w-3.5 h-3.5"></i> Clear workspace &amp; cache
                         </button>
@@ -1444,7 +1448,36 @@
              * Stream an agent run. `onEvent` receives normalized events:
              * text | thinking | tool_use | tool_result | done | error.
              */
-            async streamAgent({ messages, system, useTools = true }, onEvent) {
+            /**
+             * Ask for a plan without running anything.
+             *
+             * Cheap model, read-only tools. Returns {plan} or {error}; a
+             * failure here is never fatal, the caller just runs the task
+             * directly rather than being blocked behind a broken plan.
+             */
+            async planTask(messages) {
+                if (!this.connected) return { error: 'Backend not connected.' };
+                try {
+                    const res = await fetch(`${this.url}/api/plan`, {
+                        method: 'POST',
+                        headers: this.headers(),
+                        body: JSON.stringify({
+                            provider: editorSettings.provider || 'anthropic',
+                            model: editorSettings.aiModel,
+                            apiKey: editorSettings.apiKey || undefined,
+                            baseUrl: editorSettings.baseUrl || undefined,
+                            previewContext: describePreview(),
+                            messages
+                        })
+                    });
+                    if (!res.ok) return { error: `Backend error ${res.status}` };
+                    return await res.json();
+                } catch (err) {
+                    return { error: err.message };
+                }
+            },
+
+            async streamAgent({ messages, system, useTools = true, plan = null }, onEvent) {
                 if (!this.connected) throw new Error('Backend not connected. Start the local server (see server/README.md).');
 
                 const res = await fetch(`${this.url}/api/agent`, {
@@ -1459,7 +1492,7 @@
                         // reattaches follow-ups to the same CLI session.
                         sessionId: this.claudeSession || undefined,
                         previewContext: describePreview(),
-                        messages, system, useTools
+                        messages, system, useTools, plan
                     })
                 });
                 if (!res.ok) {
@@ -2876,7 +2909,127 @@
             // ones show states that no longer exist.
             pruneOldImages();
 
-            await streamAgentTurn();
+            if (shouldPlanFirst(prompt)) await planThenExecute();
+            else await streamAgentTurn();
+        }
+
+        // --- PLAN, THEN EXECUTE ---
+        //
+        // A full run is the expensive thing. If the agent misread the task you
+        // paid for the wrong work and only find out at the end. So anything
+        // that looks like real work gets planned first: a cheap model with the
+        // mutating tools withheld reads the project and says what it intends
+        // to do. You approve, edit or drop it before a single file is touched.
+        //
+        // Small asks skip this entirely — an approval step on "rename this
+        // variable" is friction, not safety.
+
+        let approvedPlan = null;
+
+        function shouldPlanFirst(prompt) {
+            if (editorSettings.planFirst === false) return false;
+            // CLI agents run their own loop with their own plan mode; ours
+            // would be a second, weaker one layered on top.
+            if (PROVIDER_PLANS_ITSELF.has(editorSettings.provider)) return false;
+            // Short, direct asks are cheaper to just do than to plan.
+            return prompt.trim().length >= 60 || /\b(build|create|add|implement|refactor|migrate|redesign|rewrite|set up|integrate)\b/i.test(prompt);
+        }
+
+        const PROVIDER_PLANS_ITSELF = new Set(['claude-code', 'antigravity', 'codex']);
+
+        async function planThenExecute() {
+            const msgId = `plan-${Date.now()}`;
+            renderAIChatMessage('bot', '<span class="vibe-shimmer text-[12px]">Planning…</span>', msgId);
+
+            const result = await VibeBackend.planTask(aiChatHistory);
+
+            // Planning is an optimisation, never a gate. Anything goes wrong —
+            // no plan, a provider that plans for itself, a parse failure — and
+            // the task runs the way it always did.
+            if (!result?.plan) {
+                removeAIChatMessage(msgId);
+                await streamAgentTurn();
+                return;
+            }
+
+            renderPlanForApproval(result, msgId);
+        }
+
+        function renderPlanForApproval(result, msgId) {
+            const { plan, usage } = result;
+            approvedPlan = plan;
+
+            const steps = plan.steps.map((s, i) => {
+                const files = s.files?.length
+                    ? `<div class="text-[10px] text-white/35 font-mono mt-0.5">${s.files.map(escapeHtml).join(' · ')}</div>`
+                    : '';
+                return `<div class="flex gap-2 py-1">
+                    <span class="text-[10px] text-white/30 mt-0.5 w-4 shrink-0">${i + 1}</span>
+                    <div class="min-w-0"><div class="text-[11px] text-white/80">${escapeHtml(s.action)}</div>${files}</div>
+                </div>`;
+            }).join('');
+
+            const risks = plan.risks?.length
+                ? `<div class="mt-2 pt-2 border-t border-white/10">
+                     <div class="text-[10px] text-white/40 mb-1">Assumptions and risks</div>
+                     ${plan.risks.map(r => `<div class="text-[10px] text-white/50">· ${escapeHtml(r)}</div>`).join('')}
+                   </div>`
+                : '';
+
+            const clarify = plan.clarify
+                ? `<div class="mt-2 text-[11px] text-amber-300/80">${escapeHtml(plan.clarify)}</div>`
+                : '';
+
+            // Planning cost is shown so the step justifies itself rather than
+            // being one more thing quietly spending your budget.
+            const cost = usage
+                ? `<span class="text-[9px] text-white/25">planned for ${formatPlanCost(usage)}</span>`
+                : '';
+
+            updateAIChatMessage(msgId, `
+                <div class="border border-white/15 bg-white/[0.03] rounded-lg p-3">
+                    <div class="flex items-center justify-between gap-2 mb-1.5">
+                        <span class="text-[11px] font-semibold text-white/70">Plan</span>${cost}
+                    </div>
+                    <div class="text-[11px] text-white/80 mb-1.5">${escapeHtml(plan.summary || '')}</div>
+                    ${steps}${risks}${clarify}
+                    <div class="flex gap-1.5 mt-3">
+                        <button onclick="approvePlan()" class="text-[11px] px-3 py-1.5 rounded-md bg-white text-black font-medium hover:bg-white/90 transition-colors">Run this</button>
+                        <button onclick="revisePlan()" class="text-[11px] px-2.5 py-1.5 rounded-md bg-white/10 hover:bg-white/20 border border-white/20 transition-colors">Change it</button>
+                        <button onclick="discardPlan()" class="text-[11px] px-2.5 py-1.5 rounded-md hover:bg-white/10 text-white/50 transition-colors">Cancel</button>
+                    </div>
+                </div>
+            `);
+        }
+
+        function formatPlanCost(usage) {
+            if (typeof usage.costUsd === 'number' && usage.costUsd > 0) {
+                return `$${usage.costUsd < 0.01 ? usage.costUsd.toFixed(4) : usage.costUsd.toFixed(2)}`;
+            }
+            const total = (usage.inputTokens || 0) + (usage.outputTokens || 0);
+            return `${total.toLocaleString()} tokens`;
+        }
+
+        function approvePlan() {
+            if (!approvedPlan || agentBusy) return;
+            const plan = approvedPlan;
+            approvedPlan = null;
+            streamAgentTurn({ plan });
+        }
+
+        function revisePlan() {
+            const input = document.getElementById('ai-input');
+            input.value = 'Change the plan: ';
+            input.focus();
+            approvedPlan = null;
+        }
+
+        function discardPlan() {
+            approvedPlan = null;
+            // The question stays in history but was never acted on, so drop it
+            // rather than letting the next turn answer a cancelled request.
+            if (aiChatHistory[aiChatHistory.length - 1]?.role === 'user') aiChatHistory.pop();
+            renderAIChatMessage('bot', '<span class="text-[11px] text-white/40">Cancelled — nothing was changed.</span>');
         }
 
         /** Strip images from all but the most recent user message. */
@@ -2900,7 +3053,7 @@
          * Separate from submitAIQuery so Regenerate can re-run the last turn
          * without duplicating the user's message.
          */
-        async function streamAgentTurn() {
+        async function streamAgentTurn({ plan = null } = {}) {
             if (agentBusy) return;
             agentBusy = true;
             chatPinnedToBottom = true;
@@ -2944,7 +3097,7 @@
             };
 
             try {
-                await VibeBackend.streamAgent({ messages: aiChatHistory }, (event) => {
+                await VibeBackend.streamAgent({ messages: aiChatHistory, plan }, (event) => {
                     switch (event.type) {
                         case 'text':
                             text += event.text;
@@ -3016,7 +3169,7 @@
         function checkForNewErrors() {
             clearRuntimeErrors();
             setTimeout(() => {
-                const errors = runtimeErrors.filter(e => e.level === 'error');
+                const errors = runtimeErrors.filter(e => e.level === 'error' || e.level === 'build');
                 if (!errors.length) return;
 
                 const summary = errors.slice(0, 3)
@@ -3037,7 +3190,7 @@
         }
 
         function sendErrorsToAgent() {
-            const errors = runtimeErrors.filter(e => e.level === 'error');
+            const errors = runtimeErrors.filter(e => e.level === 'error' || e.level === 'build');
             if (!errors.length || agentBusy) return;
 
             const input = document.getElementById('ai-input');
@@ -3114,6 +3267,11 @@
             if (!msgEl) return;
             msgEl.querySelector('.msg-content').innerHTML = newHtmlContent;
             scrollChatToBottom();
+        }
+
+        /** Drop a placeholder that turned out to have nothing to say. */
+        function removeAIChatMessage(id) {
+            document.getElementById(id)?.remove();
         }
 
         /**
@@ -3451,6 +3609,7 @@
                         else session.resize();
                     } else if (msg.t === 'o') {
                         term.write(msg.d);
+                        noteBuildErrors(msg.d);
                     } else if (msg.t === 'exit') {
                         if (session.wire === 'line') {
                             session.busy = false;
@@ -4026,6 +4185,7 @@
             document.getElementById('setting-minimap').checked = editorSettings.minimap;
             document.getElementById('setting-autosave').checked = editorSettings.autoSave !== false;
             document.getElementById('setting-seepreview').checked = editorSettings.seePreview !== false;
+            document.getElementById('setting-planfirst').checked = editorSettings.planFirst !== false;
             document.getElementById('setting-unicode').checked = editorSettings.unicodeHighlight;
             
             const providerSelect = document.getElementById('setting-provider');
@@ -5285,8 +5445,53 @@
             if (runtimeErrors.length > MAX_RUNTIME_ERRORS) runtimeErrors.shift();
         }
 
-        /** Errors are about the code that produced them, so a reload clears them. */
-        function clearRuntimeErrors() { runtimeErrors.length = 0; }
+        /**
+         * Errors are about the code that produced them, so a reload clears
+         * them — but only the ones the preview raised. A build failure comes
+         * from the dev server, which a preview reload says nothing about.
+         */
+        function clearRuntimeErrors() {
+            for (let i = runtimeErrors.length - 1; i >= 0; i--) {
+                if (runtimeErrors[i].level !== 'build') runtimeErrors.splice(i, 1);
+            }
+        }
+
+        // --- BUILD ERRORS ---
+        //
+        // A framework project fails at compile time, and that lands in the dev
+        // server's output rather than the preview console — so the preview
+        // shows a stale page or nothing at all, and the agent has no idea. The
+        // terminal stream is watched for the shapes those failures take.
+
+        const BUILD_ERROR = /^(?:.*\b(?:error|ERROR|ERR!|Failed to compile|Module not found|Cannot find module|SyntaxError|TypeError|Type error|Build failed|Compilation failed)\b.*)$/;
+        const BUILD_NOISE = /--no-error|error-handling|0 errors|errors?: *0|no errors|error_log|\.error\(/i;
+
+        const BUILD_RECOVERED = /compiled successfully|compiled with|ready in |built in |no issues found|webpack compiled/i;
+
+        function noteBuildErrors(chunk) {
+            if (!chunk) return;
+            // Strip ANSI so colouring doesn't defeat the match.
+            const plain = String(chunk).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+
+            // A clean rebuild retires the previous failure — otherwise a fixed
+            // error would follow you for the rest of the session.
+            if (BUILD_RECOVERED.test(plain)) clearBuildErrors();
+
+            for (const raw of plain.split(/\r?\n/)) {
+                const line = raw.trim();
+                if (line.length < 8 || line.length > 300) continue;
+                if (BUILD_NOISE.test(line)) continue;
+                if (!BUILD_ERROR.test(line)) continue;
+                recordRuntimeError('build', [line]);
+            }
+        }
+
+        /** A successful rebuild means the last failure is gone. */
+        function clearBuildErrors() {
+            for (let i = runtimeErrors.length - 1; i >= 0; i--) {
+                if (runtimeErrors[i].level === 'build') runtimeErrors.splice(i, 1);
+            }
+        }
 
         function appendLog(level, args) {
             if (level === 'error' || level === 'warn') recordRuntimeError(level, args);
