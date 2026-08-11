@@ -14,32 +14,36 @@ import { runAgent, cheapModelFor, PROVIDERS } from './agent.js';
  * approve, edit, or throw it away before anything expensive starts.
  */
 
-export const PLAN_SYSTEM = `You are planning a coding task before any code is written.
+export const PLAN_SYSTEM = `You are working out how to build something, before any code is written.
 
-Read whatever you need to understand the task, then stop and produce a plan.
-You have read-only tools: you cannot edit, create, delete, or run anything, and
-you should not try.
+Read whatever you need to understand the task, then produce the approach. You
+have read-only tools: you cannot edit, create, delete, or run anything, and you
+should not try.
+
+Your answer goes straight to the engineer who writes the code. Nobody reviews
+it first and nobody will answer questions about it, so decide the open
+questions yourself and say what you decided. Make the call a good engineer
+would make and move on.
 
 Answer with JSON and nothing else — no prose before or after, no code fence:
 
 {
-  "summary": "one sentence on what you will do",
+  "summary": "one sentence on what gets built",
   "steps": [
     { "action": "what happens in this step", "files": ["path/one.js"] }
   ],
-  "risks": ["anything that might break, or that you had to assume"],
-  "clarify": "a question, only if the task genuinely cannot be planned without one, else omit"
+  "risks": ["decisions you made, and anything that might break"]
 }
 
-Rules for a good plan:
-- Ground it in files that actually exist. Use the project map and read the
+What makes this worth doing:
+- Ground it in files that actually exist. Use the project map, and read the
   files you are unsure about rather than guessing at their contents.
-- Three to seven steps. One step per meaningful change, not per keystroke.
-- State the scope you are NOT taking on in "risks" if the request is ambiguous.
-  Scope disagreements are the most expensive kind, and this is where they get
-  caught.
-- Only set "clarify" when proceeding either way would waste the work. A routine
-  judgement call is yours to make, not a question to ask.`;
+- Three to seven steps. One per meaningful change, not per keystroke.
+- Name real paths. "Update the component" helps nobody; "src/Cart.tsx" does.
+- Where the request was ambiguous, pick the reading that does the most useful
+  work and record that choice in "risks" so the engineer knows it was a choice.
+- Say what is NOT in scope if the request could sprawl. Holding the line on
+  scope is most of what makes a result feel deliberate rather than sprawling.`;
 
 /** Pull the plan object out of a model response that may still be wrapped. */
 export function parsePlan(text) {
@@ -75,7 +79,6 @@ function normalize(plan) {
     })).filter((s) => s.action),
     risks: (Array.isArray(plan.risks) ? plan.risks : [])
       .filter((r) => typeof r === 'string').slice(0, 6),
-    clarify: typeof plan.clarify === 'string' && plan.clarify.trim() ? plan.clarify.trim() : null,
   };
 }
 
@@ -140,10 +143,11 @@ export function planAsInstructions(plan) {
     '',
     '## Approved plan',
     '',
-    'This plan was reviewed and approved by the user. Execute it.',
+    'You already worked this out by reading the project. Build it.',
     'Do not re-plan, re-survey the codebase, or restate the plan back — the',
-    'thinking is done. If a step turns out to be wrong once you see the real',
-    'code, fix it and say so, but stay inside this scope.',
+    'thinking is done, and repeating it just costs the user money. If a step',
+    'turns out to be wrong once you see the real code, fix it and say so, but',
+    'stay inside this scope.',
     '',
     plan.summary ? `Goal: ${plan.summary}` : '',
     '',

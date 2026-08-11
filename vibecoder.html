@@ -426,10 +426,6 @@
                             <span>Let the agent see the preview</span>
                             <input type="checkbox" id="setting-seepreview" onchange="updateSetting('seePreview', this.checked)" class="accent-white w-3.5 h-3.5">
                         </label>
-                        <label class="flex items-center justify-between p-1.5 text-[11px] text-white/80 hover:bg-white/5 rounded-lg cursor-pointer transition-colors" title="Plans bigger tasks on a cheap model first and shows you the plan before anything is changed">
-                            <span>Plan before making changes</span>
-                            <input type="checkbox" id="setting-planfirst" onchange="updateSetting('planFirst', this.checked)" class="accent-white w-3.5 h-3.5">
-                        </label>
                         <button onclick="resetApp()" class="w-full flex items-center gap-2 p-1.5 text-[11px] text-white/80 hover:text-white bg-white/5 hover:bg-white/15 border border-white/10 rounded-lg transition-colors">
                             <i data-lucide="eraser" class="w-3.5 h-3.5"></i> Clear workspace &amp; cache
                         </button>
@@ -1449,14 +1445,14 @@
              * text | thinking | tool_use | tool_result | done | error.
              */
             /**
-             * Ask for a plan without running anything.
+             * Work out the approach before anything is written.
              *
-             * Cheap model, read-only tools. Returns {plan} or {error}; a
-             * failure here is never fatal, the caller just runs the task
-             * directly rather than being blocked behind a broken plan.
+             * Cheap model, mutating tools withheld — it reads the real files
+             * but physically cannot change one. Returns the plan, or null if
+             * thinking didn't work out, in which case the task just runs.
              */
             async planTask(messages) {
-                if (!this.connected) return { error: 'Backend not connected.' };
+                if (!this.connected) return null;
                 try {
                     const res = await fetch(`${this.url}/api/plan`, {
                         method: 'POST',
@@ -1470,10 +1466,10 @@
                             messages
                         })
                     });
-                    if (!res.ok) return { error: `Backend error ${res.status}` };
-                    return await res.json();
-                } catch (err) {
-                    return { error: err.message };
+                    if (!res.ok) return null;
+                    return (await res.json())?.plan || null;
+                } catch {
+                    return null;
                 }
             },
 
@@ -2909,127 +2905,48 @@
             // ones show states that no longer exist.
             pruneOldImages();
 
-            if (shouldPlanFirst(prompt)) await planThenExecute();
-            else await streamAgentTurn();
+            await thinkThenBuild(prompt);
         }
 
-        // --- PLAN, THEN EXECUTE ---
+        // --- THINK, THEN BUILD ---
         //
-        // A full run is the expensive thing. If the agent misread the task you
-        // paid for the wrong work and only find out at the end. So anything
-        // that looks like real work gets planned first: a cheap model with the
-        // mutating tools withheld reads the project and says what it intends
-        // to do. You approve, edit or drop it before a single file is touched.
+        // A good engineer works out the approach before touching the code, and
+        // that is most of the difference between a decent result and a mess.
+        // So real tasks get a thinking pass first: the cheap model reads the
+        // actual files, works out what needs to change, and hands that to the
+        // model doing the work.
         //
-        // Small asks skip this entirely — an approval step on "rename this
-        // variable" is friction, not safety.
+        // You are never asked to approve anything. It thinks, then it builds.
+        // The thinking is shown while it happens because watching it work is
+        // the point — but it is a window, not a gate.
+        //
+        // Small asks skip it. Thinking about "make the button blue" is slower
+        // than just doing it.
 
-        let approvedPlan = null;
+        const PROVIDER_THINKS_ITSELF = new Set(['claude-code', 'antigravity', 'codex']);
 
-        function shouldPlanFirst(prompt) {
-            if (editorSettings.planFirst === false) return false;
-            // CLI agents run their own loop with their own plan mode; ours
-            // would be a second, weaker one layered on top.
-            if (PROVIDER_PLANS_ITSELF.has(editorSettings.provider)) return false;
-            // Short, direct asks are cheaper to just do than to plan.
-            return prompt.trim().length >= 60 || /\b(build|create|add|implement|refactor|migrate|redesign|rewrite|set up|integrate)\b/i.test(prompt);
+        function worthThinkingAbout(prompt) {
+            if (PROVIDER_THINKS_ITSELF.has(editorSettings.provider)) return false;
+            return prompt.trim().length >= 60
+                || /\b(build|create|add|implement|refactor|migrate|redesign|rewrite|set up|integrate|fix)\b/i.test(prompt);
         }
 
-        const PROVIDER_PLANS_ITSELF = new Set(['claude-code', 'antigravity', 'codex']);
-
-        async function planThenExecute() {
-            const msgId = `plan-${Date.now()}`;
-            renderAIChatMessage('bot', '<span class="vibe-shimmer text-[12px]">Planning…</span>', msgId);
-
-            const result = await VibeBackend.planTask(aiChatHistory);
-
-            // Planning is an optimisation, never a gate. Anything goes wrong —
-            // no plan, a provider that plans for itself, a parse failure — and
-            // the task runs the way it always did.
-            if (!result?.plan) {
-                removeAIChatMessage(msgId);
+        async function thinkThenBuild(prompt) {
+            if (!worthThinkingAbout(prompt)) {
                 await streamAgentTurn();
                 return;
             }
 
-            renderPlanForApproval(result, msgId);
-        }
+            const msgId = `think-${Date.now()}`;
+            renderAIChatMessage('bot', '<span class="vibe-shimmer text-[12px]">Working out the approach…</span>', msgId);
 
-        function renderPlanForApproval(result, msgId) {
-            const { plan, usage } = result;
-            approvedPlan = plan;
+            const plan = await VibeBackend.planTask(aiChatHistory);
 
-            const steps = plan.steps.map((s, i) => {
-                const files = s.files?.length
-                    ? `<div class="text-[10px] text-white/35 font-mono mt-0.5">${s.files.map(escapeHtml).join(' · ')}</div>`
-                    : '';
-                return `<div class="flex gap-2 py-1">
-                    <span class="text-[10px] text-white/30 mt-0.5 w-4 shrink-0">${i + 1}</span>
-                    <div class="min-w-0"><div class="text-[11px] text-white/80">${escapeHtml(s.action)}</div>${files}</div>
-                </div>`;
-            }).join('');
-
-            const risks = plan.risks?.length
-                ? `<div class="mt-2 pt-2 border-t border-white/10">
-                     <div class="text-[10px] text-white/40 mb-1">Assumptions and risks</div>
-                     ${plan.risks.map(r => `<div class="text-[10px] text-white/50">· ${escapeHtml(r)}</div>`).join('')}
-                   </div>`
-                : '';
-
-            const clarify = plan.clarify
-                ? `<div class="mt-2 text-[11px] text-amber-300/80">${escapeHtml(plan.clarify)}</div>`
-                : '';
-
-            // Planning cost is shown so the step justifies itself rather than
-            // being one more thing quietly spending your budget.
-            const cost = usage
-                ? `<span class="text-[9px] text-white/25">planned for ${formatPlanCost(usage)}</span>`
-                : '';
-
-            updateAIChatMessage(msgId, `
-                <div class="border border-white/15 bg-white/[0.03] rounded-lg p-3">
-                    <div class="flex items-center justify-between gap-2 mb-1.5">
-                        <span class="text-[11px] font-semibold text-white/70">Plan</span>${cost}
-                    </div>
-                    <div class="text-[11px] text-white/80 mb-1.5">${escapeHtml(plan.summary || '')}</div>
-                    ${steps}${risks}${clarify}
-                    <div class="flex gap-1.5 mt-3">
-                        <button onclick="approvePlan()" class="text-[11px] px-3 py-1.5 rounded-md bg-white text-black font-medium hover:bg-white/90 transition-colors">Run this</button>
-                        <button onclick="revisePlan()" class="text-[11px] px-2.5 py-1.5 rounded-md bg-white/10 hover:bg-white/20 border border-white/20 transition-colors">Change it</button>
-                        <button onclick="discardPlan()" class="text-[11px] px-2.5 py-1.5 rounded-md hover:bg-white/10 text-white/50 transition-colors">Cancel</button>
-                    </div>
-                </div>
-            `);
-        }
-
-        function formatPlanCost(usage) {
-            if (typeof usage.costUsd === 'number' && usage.costUsd > 0) {
-                return `$${usage.costUsd < 0.01 ? usage.costUsd.toFixed(4) : usage.costUsd.toFixed(2)}`;
-            }
-            const total = (usage.inputTokens || 0) + (usage.outputTokens || 0);
-            return `${total.toLocaleString()} tokens`;
-        }
-
-        function approvePlan() {
-            if (!approvedPlan || agentBusy) return;
-            const plan = approvedPlan;
-            approvedPlan = null;
-            streamAgentTurn({ plan });
-        }
-
-        function revisePlan() {
-            const input = document.getElementById('ai-input');
-            input.value = 'Change the plan: ';
-            input.focus();
-            approvedPlan = null;
-        }
-
-        function discardPlan() {
-            approvedPlan = null;
-            // The question stays in history but was never acted on, so drop it
-            // rather than letting the next turn answer a cancelled request.
-            if (aiChatHistory[aiChatHistory.length - 1]?.role === 'user') aiChatHistory.pop();
-            renderAIChatMessage('bot', '<span class="text-[11px] text-white/40">Cancelled — nothing was changed.</span>');
+            // Thinking first is an improvement, never a requirement. No plan,
+            // a provider that thinks for itself, any failure at all — and the
+            // task runs exactly the way it always did.
+            removeAIChatMessage(msgId);
+            await streamAgentTurn({ plan });
         }
 
         /** Strip images from all but the most recent user message. */
@@ -4185,7 +4102,6 @@
             document.getElementById('setting-minimap').checked = editorSettings.minimap;
             document.getElementById('setting-autosave').checked = editorSettings.autoSave !== false;
             document.getElementById('setting-seepreview').checked = editorSettings.seePreview !== false;
-            document.getElementById('setting-planfirst').checked = editorSettings.planFirst !== false;
             document.getElementById('setting-unicode').checked = editorSettings.unicodeHighlight;
             
             const providerSelect = document.getElementById('setting-provider');

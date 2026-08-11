@@ -31,6 +31,32 @@ and the agent can actually touch your disk.
 - **Voice input** — dictate prompts, transcribed locally by Whisper
 - **Render to video** — turn your page into an MP4 with HyperFrames
 
+### It thinks before it builds
+
+Ask for something real and the agent works out the approach first — reading the
+files that matter, deciding what changes where — then builds it. You don't
+approve anything; there's no plan to review and no gate to click through. The
+thinking runs on a small model with the editing tools withheld, so it costs
+very little and physically cannot change a file before it has understood one.
+
+Small asks skip it. Thinking about "make the button blue" is slower than just
+doing it.
+
+### It sees what it made
+
+The agent gets a screenshot of the live preview with each message, so it can
+look at its own output instead of guessing. When the page throws an error — or
+a framework project fails to compile — that lands in its lap too. If a run
+leaves the page broken, the errors come back with a button to fix them.
+
+### It doesn't waste your money
+
+Four things keep runs cheap without making them worse: a project map computed
+locally so the agent never explores your codebase by reading it, prompt caching
+on a byte-stable prefix, old screenshots pruned from history so they aren't
+re-billed every turn, and file reads issued in parallel so a batch takes as
+long as its slowest read rather than the sum.
+
 ## AI providers
 
 Most need **no API key** — they sign in through their own terminal login.
@@ -61,13 +87,21 @@ prompt in the same tab.
 **Download the latest release** and run the installer, or grab the portable zip
 and run `Vibe Coder.exe`.
 
-> Windows will warn that the app is unsigned — SmartScreen → *More info* →
-> *Run anyway*. There's no code-signing certificate on these builds.
+### Windows will warn you. That's expected.
+
+These builds aren't code-signed, so SmartScreen shows a blue *"Windows
+protected your PC"* box. Click **More info**, then **Run anyway**.
+
+The warning means "we can't verify who published this", not "this is
+dangerous" — an unsigned build from a stranger deserves your suspicion either
+way, so the source is all here and you can build it yourself in two commands
+below. A signing certificate costs a few hundred dollars a year and these
+builds don't have one.
 
 ### Build it yourself
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/vibe-coder.git
+git clone https://github.com/iturnedtoastar/vibe-coder.git
 cd vibe-coder
 npm install
 npm start          # run it
