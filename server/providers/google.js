@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { sseLines, assertOk } from './sse.js';
-import { toParts } from '../messages.js';
+import { toModelParts } from '../messages.js';
 
 /**
  * Gemini expects an OpenAPI-flavoured schema with UPPERCASE type names and
@@ -34,7 +34,7 @@ export const google = {
   toHistory(messages) {
     return messages.map((m) => ({
       role: m.role === 'assistant' ? 'model' : 'user',
-      parts: toParts(m.content).map((part) =>
+      parts: toModelParts(m.content).map((part) =>
         part.type === 'image'
           ? { inlineData: { mimeType: part.mediaType, data: part.data } }
           : { text: part.text }

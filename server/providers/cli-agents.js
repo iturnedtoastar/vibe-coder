@@ -280,10 +280,29 @@ export function makeCliProvider(key) {
           });
         } catch { /* fall through with whatever landed */ }
 
-        if (written.length) {
-          prompt = `${prompt}\n\nAttached image${written.length > 1 ? 's' : ''} — read ${written.length > 1 ? 'them' : 'it'} to see what I mean:\n`
-            + written.map((f) => `- ${f}`).join('\n');
+        // A screenshot the app took by itself is not a reference image the
+        // user chose to send, and saying so matters: described as "attached",
+        // the agent opens it looking for the visual direction it was asked
+        // for, and spends a turn studying a picture of the page it is about
+        // to replace.
+        const notes = [];
+        const shots = written.filter((_, i) => images[i]?.source === 'preview');
+        const attached = written.filter((_, i) => images[i]?.source !== 'preview');
+
+        if (attached.length) {
+          notes.push(
+            `Attached image${attached.length > 1 ? 's' : ''} — read ${attached.length > 1 ? 'them' : 'it'} to see what I mean:\n`
+            + attached.map((f) => `- ${f}`).join('\n')
+          );
         }
+        if (shots.length) {
+          notes.push(
+            'A screenshot of the live preview was captured automatically and saved to '
+            + `${shots.join(', ')}. The user did not attach it and is not asking about it. `
+            + 'Open it only if how the page currently looks matters to the task.'
+          );
+        }
+        if (notes.length) prompt = `${prompt}\n\n${notes.join('\n\n')}`;
       }
 
       // These CLIs have their own system prompt and no reliable way to append

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { config } from '../config.js';
-import { toParts } from '../messages.js';
+import { toModelParts } from '../messages.js';
 
 /**
  * Models that take adaptive thinking + output_config.effort. Older models
@@ -32,7 +32,7 @@ function buildParams({ model, system, history, tools }) {
 
   // Prompt caching. The system prompt and tool schemas are identical on every
   // turn of a run but were being re-sent and re-billed at full price each time
-  // — on a long agent run that is most of the input cost. Marking the end of
+  // â€” on a long agent run that is most of the input cost. Marking the end of
   // the tools block caches everything before it, so subsequent turns pay the
   // ~10% cache-read rate instead.
   //
@@ -71,11 +71,11 @@ export const anthropic = {
 
   toHistory(messages) {
     return messages.map((m) => {
-      // Plain strings stay strings — only promote to blocks when needed.
+      // Plain strings stay strings â€” only promote to blocks when needed.
       if (typeof m.content === 'string') return { role: m.role, content: m.content };
       return {
         role: m.role,
-        content: toParts(m.content).map((part) =>
+        content: toModelParts(m.content).map((part) =>
           part.type === 'image'
             ? {
                 type: 'image',
@@ -162,7 +162,7 @@ export const anthropic = {
       .filter((b) => b.type === 'tool_use')
       .map((b) => ({ id: b.id, name: b.name, input: b.input }));
 
-    // Push `final.content` verbatim — thinking blocks must be replayed
+    // Push `final.content` verbatim â€” thinking blocks must be replayed
     // unchanged on the next turn or the API rejects the conversation.
     return { assistant: { role: 'assistant', content: final.content }, toolCalls, stop: final.stop_reason };
   },

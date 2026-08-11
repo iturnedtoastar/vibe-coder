@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { sseLines, assertOk } from './sse.js';
-import { toParts } from '../messages.js';
+import { toModelParts } from '../messages.js';
 
 /**
  * OpenAI-compatible chat completions with streaming tool calls. Works against
@@ -16,7 +16,7 @@ export const openai = {
       if (typeof m.content === 'string') return { role: m.role, content: m.content };
       return {
         role: m.role,
-        content: toParts(m.content).map((part) =>
+        content: toModelParts(m.content).map((part) =>
           part.type === 'image'
             ? { type: 'image_url', image_url: { url: `data:${part.mediaType};base64,${part.data}` } }
             : { type: 'text', text: part.text }
@@ -90,7 +90,7 @@ export const openai = {
       for (const call of delta.tool_calls || []) {
         // OpenAI always sends `index`, but several compatible endpoints
         // (DeepSeek, Groq, Ollama) omit it. Keying everything on `undefined`
-        // would merge parallel calls into one — "read_fileread_file" with two
+        // would merge parallel calls into one â€” "read_fileread_file" with two
         // concatenated argument objects.
         const key = call.index ?? call.id ?? pending.size;
         const slot = pending.get(key) || { id: '', name: '', args: '' };

@@ -689,7 +689,7 @@
                         <svg class="vibe-mark w-3.5 h-3.5 text-white shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12l4 6-10 12L2 9z"/><path class="facet-l" d="M2 9h20" stroke-width="1.2"/><path class="facet-r" d="M6 3l2 6 4 12 4-12 2-6" stroke-width="1.2"/></svg>
                     </div>
                     <div class="text-white/80 text-[13px] leading-relaxed">
-                        Hey! I'm your autonomous Vibe Agent. I have full context of your <strong>Workspace</strong>.<br><br>I can write code, create files, and update your UI in real-time. Try asking me to create a new React component!
+                        Tell me what you want to build and I'll build it — I can read and write the files in your open folder, run commands, and see the live preview as it changes.<br><br>Describe the result you want rather than the steps. &ldquo;A retro arcade game that gets harder as you survive&rdquo; works better than a list of instructions.
                     </div>
                 </div>
             </div>
@@ -2839,7 +2839,11 @@
 
                 const match = /^data:([^;]+);base64,(.*)$/s.exec(shot.dataUrl);
                 if (!match) return null;
-                return { type: 'image', mediaType: match[1], data: match[2] };
+                // Tagged so the agent is told what this is. Handed over
+                // unlabelled it reads as a reference image the user chose to
+                // attach, and the agent wastes a turn studying it for
+                // "the visual direction you want".
+                return { type: 'image', mediaType: match[1], data: match[2], source: 'preview' };
             } catch {
                 return null;
             }
