@@ -6,7 +6,7 @@
   "type": "module",
   "description": "An AI coding IDE with a real terminal, real file access, and a tool-using agent.",
   "author": "Vibe Coder",
-  "main": "desktop/main.js",
+  "main": "desktop/boot.js",
   "scripts": {
     "start": "node desktop/launch.js",
     "server": "node server/server.js",

@@ -98,6 +98,24 @@ way, so the source is all here and you can build it yourself in two commands
 below. A signing certificate costs a few hundred dollars a year and these
 builds don't have one.
 
+### If you launch it from a VS Code terminal and nothing happens
+
+Start it from the **Start Menu or desktop shortcut** instead. That always works.
+
+VS Code sets `ELECTRON_RUN_AS_NODE=1` in its integrated terminal, and every
+program started from there inherits it. Electron-based apps — this one, and
+others — then boot as plain Node rather than as a desktop app: no window
+appears and the process exits silently with no error.
+
+It cannot be fixed from inside the app, because in that mode none of the app's
+code is ever loaded. To launch from that terminal anyway, clear the variable
+first:
+
+```powershell
+$env:ELECTRON_RUN_AS_NODE = $null
+& "$env:LOCALAPPDATA\Programs\vibe-coder\Vibe Coder.exe"
+```
+
 ### Build it yourself
 
 ```bash
